@@ -8,8 +8,8 @@ import { colors, spacing, radius } from "@/src/theme";
 
 export type AdvancedFilters = {
   radius_km: number;
-  day: string | null;
-  position: string | null;
+  days: string[];
+  positions: string[];
 };
 
 const DAYS = [
@@ -81,13 +81,21 @@ export function AdvancedFiltersSheet({ visible, value, onChange, onClose, onRese
 
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Jour préféré</Text>
+              <Text style={styles.sectionSub}>Multi-sélection possible</Text>
               <View style={styles.chipRow}>
                 {DAYS.map((d) => {
-                  const active = value.day === d.key;
+                  const active = value.days.includes(d.key);
                   return (
                     <Pressable
                       key={d.key}
-                      onPress={() => onChange({ ...value, day: active ? null : d.key })}
+                      onPress={() =>
+                        onChange({
+                          ...value,
+                          days: active
+                            ? value.days.filter((k) => k !== d.key)
+                            : [...value.days, d.key],
+                        })
+                      }
                       style={[styles.dayChip, active && { backgroundColor: colors.primaryMuted, borderColor: colors.primary }]}
                       testID={`filter-day-${d.key}`}
                     >
@@ -102,14 +110,21 @@ export function AdvancedFiltersSheet({ visible, value, onChange, onClose, onRese
 
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Poste recherché par le groupe</Text>
-              <Text style={styles.sectionSub}>Cherche les groupes qui recrutent ton poste</Text>
+              <Text style={styles.sectionSub}>Coche un ou plusieurs postes</Text>
               <View style={styles.chipRow}>
                 {POSITIONS.map((p) => {
-                  const active = value.position === p.key;
+                  const active = value.positions.includes(p.key);
                   return (
                     <Pressable
                       key={p.key}
-                      onPress={() => onChange({ ...value, position: active ? null : p.key })}
+                      onPress={() =>
+                        onChange({
+                          ...value,
+                          positions: active
+                            ? value.positions.filter((k) => k !== p.key)
+                            : [...value.positions, p.key],
+                        })
+                      }
                       style={[styles.posChip, active && { backgroundColor: colors.primaryMuted, borderColor: colors.primary }]}
                       testID={`filter-position-${p.key}`}
                     >

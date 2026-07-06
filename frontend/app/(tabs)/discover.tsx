@@ -32,7 +32,7 @@ const SORT_CHIPS: ChipItem[] = [
   { key: "recent", label: "Récent" },
 ];
 
-const DEFAULT_FILTERS: AdvancedFilters = { radius_km: 30, day: null, position: null };
+const DEFAULT_FILTERS: AdvancedFilters = { radius_km: 30, days: [], positions: [] };
 
 export default function Discover() {
   const router = useRouter();
@@ -52,8 +52,8 @@ export default function Discover() {
         level,
         sort,
         radius_km: advanced.radius_km < 30 ? advanced.radius_km : undefined,
-        day: advanced.day || undefined,
-        position: advanced.position || undefined,
+        day: advanced.days.length > 0 ? advanced.days.join(",") : undefined,
+        position: advanced.positions.length > 0 ? advanced.positions.join(",") : undefined,
       });
       setGroups(data);
     } catch (e) {
@@ -69,7 +69,7 @@ export default function Discover() {
   }, [load]);
 
   const activeCount =
-    (advanced.radius_km < 30 ? 1 : 0) + (advanced.day ? 1 : 0) + (advanced.position ? 1 : 0);
+    (advanced.radius_km < 30 ? 1 : 0) + advanced.days.length + advanced.positions.length;
 
   return (
     <Screen edges={["top"]} testID="discover-screen">
@@ -154,18 +154,20 @@ export default function Discover() {
               onClear={() => setAdvanced({ ...advanced, radius_km: 30 })}
             />
           )}
-          {advanced.day && (
+          {advanced.days.map((d) => (
             <ActiveFilterPill
-              label={dayLabel(advanced.day)}
-              onClear={() => setAdvanced({ ...advanced, day: null })}
+              key={`day-${d}`}
+              label={dayLabel(d)}
+              onClear={() => setAdvanced({ ...advanced, days: advanced.days.filter((x) => x !== d) })}
             />
-          )}
-          {advanced.position && (
+          ))}
+          {advanced.positions.map((p) => (
             <ActiveFilterPill
-              label={`Poste : ${advanced.position}`}
-              onClear={() => setAdvanced({ ...advanced, position: null })}
+              key={`pos-${p}`}
+              label={`Poste : ${p}`}
+              onClear={() => setAdvanced({ ...advanced, positions: advanced.positions.filter((x) => x !== p) })}
             />
-          )}
+          ))}
         </View>
       )}
 

@@ -19,16 +19,16 @@ Join request system (admin approval), Match RSVP + team composition (tap-to-assi
 
 ### 1. Advanced Search
 - **New Group fields**: `preferred_days: string[]` (mon..sun) and `positions_needed: string[]` (GK/DEF/MID/FWD) — updatable in create/edit
-- **Discover query params**: `radius_km`, `day`, `position` (in addition to q, level, sort)
+- **Discover query params**: `radius_km`, `day`, `position` (in addition to q, level, sort). `day` and `position` accept **CSV** for multi-select (e.g., `day=sat,sun&position=GK,DEF`) — backend uses `$in` on MongoDB. Single value still works (backward compatible).
 - **Backend filtering**:
-  - `day` filters `preferred_days` array-contains
-  - `position` filters `positions_needed` array-contains
+  - `day` (CSV) filters `preferred_days` array-contains any of the values
+  - `position` (CSV) filters `positions_needed` array-contains any of the values
   - `radius_km` post-filters by `distance_km <= radius_km`
 - **Frontend** (`Discover`):
-  - New filters button (top-right of header) with active-count badge
-  - Bottom-sheet **AdvancedFiltersSheet** with: radius slider (1–30km, 30=∞), day chips (7 days, single-select), position chips (4 positions, single-select)
-  - Active-filter pills row under sort chips (`Dimanche ×`, `Poste : GK ×`) — tap × to clear one
-  - `Réinitialiser` button resets all filters to defaults
+  - New filters button (top-right of header) with active-count badge (sums radius + N days + N positions)
+  - Bottom-sheet **AdvancedFiltersSheet** with: radius slider (1–30km, 30=∞), day chips (7 days, **multi-select toggle**), position chips (4 positions, **multi-select toggle**). Subtitle "Multi-sélection possible" clarifies UX.
+  - Active-filter pills row under sort chips — one pill per selected day + one per position + one for radius. Tap × to clear individually.
+  - `Réinitialiser` button resets all filters to defaults (`days: []`, `positions: []`, `radius_km: 30`)
 - **Frontend** (`Group Detail`): new section showing preferred_days + positions_needed as chips
 - **Frontend** (`Create Group`): pill selectors for both fields at bottom of form
 

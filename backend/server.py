@@ -520,9 +520,17 @@ async def list_groups(
     if city:
         query["city"] = {"$regex": city, "$options": "i"}
     if day:
-        query["preferred_days"] = day
+        days = [d.strip() for d in day.split(",") if d.strip()]
+        if len(days) == 1:
+            query["preferred_days"] = days[0]
+        elif len(days) > 1:
+            query["preferred_days"] = {"$in": days}
     if position and position != "any":
-        query["positions_needed"] = position
+        positions = [p.strip() for p in position.split(",") if p.strip()]
+        if len(positions) == 1:
+            query["positions_needed"] = positions[0]
+        elif len(positions) > 1:
+            query["positions_needed"] = {"$in": positions}
 
     _, blocked_groups = await blocked_ids(user["id"])
     if blocked_groups:
