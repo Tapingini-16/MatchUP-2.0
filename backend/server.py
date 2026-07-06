@@ -1,5 +1,5 @@
 """
-PitchFinder Backend API
+MatchUp Backend API
 FastAPI + MongoDB - Amateur football community platform
 """
 import os
@@ -26,7 +26,7 @@ load_dotenv(ROOT_DIR / ".env")
 # ============= CONFIG =============
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
-JWT_SECRET = os.environ.get("JWT_SECRET", "pitchfinder-dev-secret-change-me-in-prod-2026")
+JWT_SECRET = os.environ.get("JWT_SECRET", "matchup-dev-secret-change-me-in-prod-2026")
 JWT_ALGO = "HS256"
 JWT_EXPIRE_HOURS = 24 * 30  # 30 days
 
@@ -45,7 +45,7 @@ EMERGENT_AUTH_BASE = "https://demobackend.emergentagent.com"
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
 
-app = FastAPI(title="PitchFinder API")
+app = FastAPI(title="MatchUp API")
 api = APIRouter(prefix="/api")
 security = HTTPBearer(auto_error=False)
 
@@ -102,10 +102,13 @@ class GroupCreate(BaseModel):
     description: str
     photo: Optional[str] = None
     city: str
-    level: str  # rookie, intermediate, advanced, elite, mixed
+    level: str
     max_members: int = 20
-    preferred_days: List[str] = []  # mon, tue, wed, thu, fri, sat, sun
-    positions_needed: List[str] = []  # GK, DEF, MID, FWD
+    preferred_days: List[str] = []
+    positions_needed: List[str] = []
+    field_location: Optional[str] = None  # human-readable address
+    field_lat: Optional[float] = None
+    field_lng: Optional[float] = None
 
 
 class GroupUpdate(BaseModel):
@@ -117,18 +120,50 @@ class GroupUpdate(BaseModel):
     max_members: Optional[int] = None
     preferred_days: Optional[List[str]] = None
     positions_needed: Optional[List[str]] = None
+    field_location: Optional[str] = None
+    field_lat: Optional[float] = None
+    field_lng: Optional[float] = None
 
 
 class ReportCreate(BaseModel):
-    target_type: str  # user | group
+    target_type: str
     target_id: str
-    reason: str  # spam, harassment, inappropriate, fake, other
+    reason: str
     message: Optional[str] = None
 
 
 class BlockToggle(BaseModel):
-    target_type: str  # user | group
+    target_type: str
     target_id: str
+
+
+class FriendRequest(BaseModel):
+    to_user_id: str
+
+
+class MessageCreate(BaseModel):
+    text: str = Field(default="", max_length=1000)
+    image: Optional[str] = None  # base64 data URI
+    poll: Optional[dict] = None  # {question: str, options: [str]}
+
+
+class PollVote(BaseModel):
+    option_index: int
+
+
+class MatchRatingCreate(BaseModel):
+    match_id: str
+    ratings: dict  # {user_id: {level: 1-5, punctuality: 1-5, fairplay: 1-5}}
+
+
+class ChangePassword(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=6)
+
+
+class OtpVerify(BaseModel):
+    code: str  # 6-digit code, dev accepts "000000"
+    target: str  # 'email' | 'phone' | 'mfa'
 
 
 class GroupPublic(BaseModel):
@@ -150,10 +185,6 @@ class GroupPublic(BaseModel):
 
 class JoinRequestCreate(BaseModel):
     message: Optional[str] = None
-
-
-class MessageCreate(BaseModel):
-    text: str = Field(min_length=1)
 
 
 class MessagePublic(BaseModel):
@@ -327,7 +358,7 @@ class GoogleSessionBody(BaseModel):
 
 @api.post("/auth/google")
 async def google_session(body: GoogleSessionBody):
-    """Exchange an Emergent session_id for a PitchFinder JWT.
+    """Exchange an Emergent session_id for a MatchUp JWT.
 
     Upserts the user by email so repeated Google logins map to the same account.
     """
@@ -486,6 +517,9 @@ async def group_to_public(g: dict, user_id: str) -> dict:
         "join_status": join_status,
         "preferred_days": g.get("preferred_days", []),
         "positions_needed": g.get("positions_needed", []),
+        "field_location": g.get("field_location"),
+        "field_lat": g.get("field_lat"),
+        "field_lng": g.get("field_lng"),
     }
 
 
@@ -773,13 +807,23 @@ async def send_message(
     )
     if not is_member:
         raise HTTPException(status_code=403, detail="Not a group member")
+    if not body.text and not body.image and not body.poll:
+        raise HTTPException(status_code=400, detail="Empty message")
+    if body.poll:
+        # Validate poll structure
+        opts = body.poll.get("options", [])
+        if not body.poll.get("question") or not isinstance(opts, list) or len(opts) < 2:
+            raise HTTPException(status_code=400, detail="Invalid poll")
+        body.poll["votes"] = {}  # {user_id: option_index}
     doc = {
         "id": str(uuid.uuid4()),
         "group_id": group_id,
         "user_id": user["id"],
         "user_name": user["name"],
         "user_photo": user.get("photo"),
-        "text": body.text,
+        "text": body.text or "",
+        "image": body.image,
+        "poll": body.poll,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.messages.insert_one(doc)
@@ -790,11 +834,16 @@ async def send_message(
             {"group_id": group_id, "user_id": {"$ne": user["id"]}}, {"_id": 0, "user_id": 1}
         ).to_list(200)
         group = await db.groups.find_one({"id": group_id}, {"_id": 0, "name": 1})
-        preview = body.text[:80] + ("…" if len(body.text) > 80 else "")
+        if body.poll:
+            preview = f"📊 Sondage : {body.poll.get('question', '')[:60]}"
+        elif body.image:
+            preview = "📷 Photo"
+        else:
+            preview = body.text[:80] + ("…" if len(body.text) > 80 else "")
         await send_push(
             recipients=[m["user_id"] for m in members],
             data={
-                "title": f"{user['name']} · {group['name'] if group else 'PitchFinder'}",
+                "title": f"{user['name']} · {group['name'] if group else 'MatchUp'}",
                 "message": preview,
                 "action_url": f"/chat/{group_id}",
             },
@@ -802,6 +851,26 @@ async def send_message(
     except Exception as e:
         logger.warning("push failed: %s", e)
     return doc
+
+
+@api.post("/messages/{msg_id}/poll/vote")
+async def vote_poll(msg_id: str, body: PollVote, user: dict = Depends(current_user)):
+    msg = await db.messages.find_one({"id": msg_id})
+    if not msg or not msg.get("poll"):
+        raise HTTPException(status_code=404, detail="Poll not found")
+    is_member = await db.group_members.find_one(
+        {"group_id": msg["group_id"], "user_id": user["id"]}
+    )
+    if not is_member:
+        raise HTTPException(status_code=403, detail="Not a group member")
+    opts = msg["poll"].get("options", [])
+    if not (0 <= body.option_index < len(opts)):
+        raise HTTPException(status_code=400, detail="Invalid option")
+    await db.messages.update_one(
+        {"id": msg_id}, {"$set": {f"poll.votes.{user['id']}": body.option_index}}
+    )
+    updated = await db.messages.find_one({"id": msg_id}, {"_id": 0})
+    return updated
 
 
 # ============= MATCHES =============
@@ -1060,6 +1129,222 @@ async def list_blocks(user: dict = Depends(current_user)):
     ]
 
 
+# ============= FRIENDS =============
+async def friendship_key(a: str, b: str) -> str:
+    return "-".join(sorted([a, b]))
+
+
+@api.post("/friends/request", status_code=201)
+async def send_friend_request(body: FriendRequest, user: dict = Depends(current_user)):
+    if body.to_user_id == user["id"]:
+        raise HTTPException(400, "Cannot friend yourself")
+    other = await db.users.find_one({"id": body.to_user_id}, {"_id": 0, "id": 1, "name": 1})
+    if not other:
+        raise HTTPException(404, "User not found")
+    key = await friendship_key(user["id"], body.to_user_id)
+    existing = await db.friendships.find_one({"key": key})
+    if existing:
+        if existing["status"] == "accepted":
+            return {"status": "already_friends"}
+        return {"status": existing["status"]}
+    await db.friendships.insert_one({
+        "key": key,
+        "from_user_id": user["id"],
+        "to_user_id": body.to_user_id,
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    try:
+        await send_push(
+            recipients=[body.to_user_id],
+            data={
+                "title": "Nouvelle demande d'ami",
+                "message": f"{user['name']} veut te rajouter comme ami",
+                "action_url": "/friends",
+            },
+        )
+    except Exception:
+        pass
+    return {"status": "pending"}
+
+
+@api.post("/friends/{friend_user_id}/accept")
+async def accept_friend(friend_user_id: str, user: dict = Depends(current_user)):
+    key = await friendship_key(user["id"], friend_user_id)
+    f = await db.friendships.find_one({"key": key, "status": "pending", "to_user_id": user["id"]})
+    if not f:
+        raise HTTPException(404, "No pending request")
+    await db.friendships.update_one({"key": key}, {"$set": {"status": "accepted"}})
+    return {"status": "accepted"}
+
+
+@api.post("/friends/{friend_user_id}/decline")
+async def decline_friend(friend_user_id: str, user: dict = Depends(current_user)):
+    key = await friendship_key(user["id"], friend_user_id)
+    await db.friendships.delete_one({"key": key, "to_user_id": user["id"], "status": "pending"})
+    return {"status": "declined"}
+
+
+@api.delete("/friends/{friend_user_id}")
+async def remove_friend(friend_user_id: str, user: dict = Depends(current_user)):
+    key = await friendship_key(user["id"], friend_user_id)
+    await db.friendships.delete_one({"key": key})
+    return {"status": "removed"}
+
+
+@api.get("/friends")
+async def list_friends(user: dict = Depends(current_user)):
+    accepted = await db.friendships.find(
+        {"$or": [{"from_user_id": user["id"]}, {"to_user_id": user["id"]}], "status": "accepted"},
+        {"_id": 0},
+    ).to_list(500)
+    incoming = await db.friendships.find(
+        {"to_user_id": user["id"], "status": "pending"}, {"_id": 0}
+    ).to_list(500)
+    outgoing = await db.friendships.find(
+        {"from_user_id": user["id"], "status": "pending"}, {"_id": 0}
+    ).to_list(500)
+
+    def other_id(f):
+        return f["to_user_id"] if f["from_user_id"] == user["id"] else f["from_user_id"]
+
+    ids = list({other_id(f) for f in accepted} | {f["from_user_id"] for f in incoming} | {f["to_user_id"] for f in outgoing})
+    users_map: dict = {}
+    if ids:
+        users = await db.users.find(
+            {"id": {"$in": ids}}, {"_id": 0, "id": 1, "name": 1, "photo": 1, "position": 1, "level": 1, "verified": 1}
+        ).to_list(500)
+        users_map = {u["id"]: u for u in users}
+    return {
+        "friends": [users_map.get(other_id(f)) for f in accepted if users_map.get(other_id(f))],
+        "incoming": [{**users_map.get(f["from_user_id"], {}), "friendship_created_at": f["created_at"]} for f in incoming if users_map.get(f["from_user_id"])],
+        "outgoing": [{**users_map.get(f["to_user_id"], {}), "friendship_created_at": f["created_at"]} for f in outgoing if users_map.get(f["to_user_id"])],
+    }
+
+
+@api.get("/friends/status/{other_id}")
+async def friend_status(other_id: str, user: dict = Depends(current_user)):
+    if other_id == user["id"]:
+        return {"status": "self"}
+    key = await friendship_key(user["id"], other_id)
+    f = await db.friendships.find_one({"key": key}, {"_id": 0})
+    if not f:
+        return {"status": "none"}
+    if f["status"] == "accepted":
+        return {"status": "friends"}
+    if f["from_user_id"] == user["id"]:
+        return {"status": "outgoing"}
+    return {"status": "incoming"}
+
+
+# ============= MATCH RATINGS =============
+@api.post("/matches/{match_id}/ratings", status_code=201)
+async def rate_match(match_id: str, body: MatchRatingCreate, user: dict = Depends(current_user)):
+    m = await db.matches.find_one({"id": match_id})
+    if not m:
+        raise HTTPException(404, "Match not found")
+    is_member = await db.group_members.find_one(
+        {"group_id": m["group_id"], "user_id": user["id"]}
+    )
+    if not is_member:
+        raise HTTPException(403, "Not a group member")
+    # Persist per-rater dict so a user can update their own ratings
+    now = datetime.now(timezone.utc).isoformat()
+    for rated_id, scores in body.ratings.items():
+        if rated_id == user["id"]:
+            continue
+        await db.ratings.update_one(
+            {"match_id": match_id, "rater_id": user["id"], "rated_id": rated_id},
+            {"$set": {
+                "match_id": match_id,
+                "rater_id": user["id"],
+                "rated_id": rated_id,
+                "level": int(scores.get("level", 3)),
+                "punctuality": int(scores.get("punctuality", 3)),
+                "fairplay": int(scores.get("fairplay", 3)),
+                "created_at": now,
+            }},
+            upsert=True,
+        )
+        # Refresh aggregate reputation: +10 per full 5-star rating avg
+        pipeline = [
+            {"$match": {"rated_id": rated_id}},
+            {"$group": {
+                "_id": "$rated_id",
+                "avg_level": {"$avg": "$level"},
+                "avg_punc": {"$avg": "$punctuality"},
+                "avg_fp": {"$avg": "$fairplay"},
+                "count": {"$sum": 1},
+            }},
+        ]
+        agg = [a async for a in db.ratings.aggregate(pipeline)]
+        if agg:
+            a = agg[0]
+            total_stars = (a["avg_level"] + a["avg_punc"] + a["avg_fp"]) / 3.0
+            new_rep = int(500 + total_stars * 100 + a["count"] * 5)
+            await db.users.update_one(
+                {"id": rated_id},
+                {"$set": {"reputation": new_rep, "avg_rating": round(total_stars, 2), "ratings_count": a["count"]}},
+            )
+    return {"status": "saved"}
+
+
+@api.get("/matches/{match_id}/ratings/mine")
+async def my_ratings(match_id: str, user: dict = Depends(current_user)):
+    docs = await db.ratings.find(
+        {"match_id": match_id, "rater_id": user["id"]}, {"_id": 0}
+    ).to_list(200)
+    return {r["rated_id"]: {"level": r["level"], "punctuality": r["punctuality"], "fairplay": r["fairplay"]} for r in docs}
+
+
+# ============= SECURITY (change password + OTP skeleton) =============
+@api.post("/users/me/password")
+async def change_password(body: ChangePassword, user: dict = Depends(current_user)):
+    full = await db.users.find_one({"id": user["id"]})
+    if not full or not check_password(body.current_password, full.get("password_hash", "")):
+        raise HTTPException(400, "Current password incorrect")
+    await db.users.update_one(
+        {"id": user["id"]}, {"$set": {"password_hash": hash_password(body.new_password)}}
+    )
+    return {"status": "updated"}
+
+
+@api.post("/security/otp/request")
+async def request_otp(target: str, user: dict = Depends(current_user)):
+    """DEV: real OTP flow requires an SMS/email provider.
+    In dev, the code is fixed to 000000 — real integration is a deployment concern."""
+    if target not in ("email", "phone", "mfa"):
+        raise HTTPException(400, "Invalid target")
+    await db.otp_challenges.update_one(
+        {"user_id": user["id"], "target": target},
+        {"$set": {
+            "user_id": user["id"],
+            "target": target,
+            "code": "000000",  # DEV placeholder
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
+    return {"status": "sent", "dev_hint": "Use code 000000 in dev"}
+
+
+@api.post("/security/otp/verify")
+async def verify_otp(body: OtpVerify, user: dict = Depends(current_user)):
+    if body.target not in ("email", "phone", "mfa"):
+        raise HTTPException(400, "Invalid target")
+    challenge = await db.otp_challenges.find_one(
+        {"user_id": user["id"], "target": body.target}
+    )
+    if not challenge or challenge["code"] != body.code:
+        raise HTTPException(400, "Invalid code")
+    field_map = {"email": "email_verified", "phone": "phone_verified", "mfa": "mfa_enabled"}
+    await db.users.update_one(
+        {"id": user["id"]}, {"$set": {field_map[body.target]: True}}
+    )
+    await db.otp_challenges.delete_one({"user_id": user["id"], "target": body.target})
+    return {"status": "verified"}
+
+
 # ============= SEED =============
 @api.post("/seed")
 async def seed_data():
@@ -1074,7 +1359,7 @@ async def seed_data():
     # Demo users
     demo_users = [
         {
-            "email": "demo@pitchfinder.app",
+            "email": "demo@matchup.app",
             "password": "demo1234",
             "name": "Alex Martin",
             "position": "MID",
@@ -1091,7 +1376,7 @@ async def seed_data():
             "badges": ["playmaker", "captain", "veteran"],
         },
         {
-            "email": "sarah@pitchfinder.app",
+            "email": "sarah@matchup.app",
             "password": "demo1234",
             "name": "Sarah Ndiaye",
             "position": "FWD",
@@ -1108,7 +1393,7 @@ async def seed_data():
             "verified": True,
         },
         {
-            "email": "leo@pitchfinder.app",
+            "email": "leo@matchup.app",
             "password": "demo1234",
             "name": "Léo Dubois",
             "position": "DEF",
@@ -1124,7 +1409,7 @@ async def seed_data():
             "badges": ["wall", "reliable"],
         },
         {
-            "email": "tom@pitchfinder.app",
+            "email": "tom@matchup.app",
             "password": "demo1234",
             "name": "Tom Garcia",
             "position": "GK",
@@ -1322,7 +1607,7 @@ async def seed_data():
 
 @api.get("/")
 async def root():
-    return {"app": "PitchFinder", "version": "1.0.0"}
+    return {"app": "MatchUp", "version": "1.0.0"}
 
 
 # ============= REGISTER =============
@@ -1340,7 +1625,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
-logger = logging.getLogger("pitchfinder")
+logger = logging.getLogger("matchup")
 
 
 @app.on_event("startup")

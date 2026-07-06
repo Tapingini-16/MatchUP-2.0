@@ -1,0 +1,70 @@
+{
+  "summary": "MatchUp V4 iteration 4 testing (formerly PitchFinder). Backend V4 pytest: 9/10 pass, 1 skipped, 1 FAIL — self-match-rating spec deviation. All 4 targeted frontend flows PASS on 390x844 mobile viewport. Backend covered: auth login, friends full flow (request→accept→status friends both ways→delete), polls (create in group, vote, idempotent re-vote, second user vote tallied, invalid option 400), match ratings (POST + GET /matches/{id}/ratings/mine verifies stored level=4/punct=5/fp=5), leave group as member (Leo left FC République/other → membership removed), leave-as-admin destructive test SKIPPED to preserve seed (see rca), OTP request+verify with 000000 in dev, invalid-target 400, wrong-code 400, change password + revert (verified new pw login works then reverted to demo1234). Self-rating: POST /matches/{id}/ratings with {demo_id:{level,punct,fp}} returns 201 but server silently skips storing (server.py L1254 `if rated_id == user['id']: continue`). Spec required 400. Frontend flows (via Playwright): A) chat input visible at y=770 after focus/type, sent message 'TEST_MSG_v4_keyboard_ok' appears in list; B) group-menu-button opens sheet with menu-share+menu-leave+menu-rate+menu-report visible AND menu-block hidden — correctly because demo is ADMIN of Les Titans (matches spec fallback 'may be 4 for admin'); tapping menu-share opens ShareModal with light link card and 'Copier' button; C) first member card in Les Titans (Alex Martin id 7fb44147-...) navigates to /profile/{id}, public-profile-screen renders (no crash, shows Alex Martin, MID, Intermédiaire, 42 matchs, réputation 850); D) /map renders map-screen with 8 map-pin-* and 8 map-list-* items, tapping first list item navigates to group-detail-screen.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/matches/{id}/ratings",
+        "issue": "Self-rating is silently skipped (server.py:1253-1255 uses `continue`) and returns 201. Spec requires HTTP 400. Data integrity is preserved (self rating never stored), but API contract is misleading."
+      },
+      {
+        "endpoint": "POST /api/groups/{id}/leave (admin)",
+        "issue": "Endpoint allows an admin to leave without checking role and without transferring admin rights (server.py:769-772 just deletes group_members row). Not covered by pytest to avoid corrupting seed data. Consider blocking with 400 or auto-transferring admin to oldest member."
+      },
+      {
+        "endpoint": "POST /api/friends/request",
+        "issue": "No explicit rejection when to_user_id == self. Behavior not tested but worth a self-friend guard similar to self-report guard."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "props.pointerEvents deprecation warning",
+        "issue": "Console warns: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Migrate any React Native components passing pointerEvents as a prop to use style.pointerEvents instead. Repro: appears on nearly every page load in web preview console."
+      },
+      {
+        "component": "expo-notifications on web",
+        "issue": "Console warns: '[expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.' This is expected for web preview (push requires native build) but confirms push cannot be validated on web preview and needs a device build."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v4_features.py",
+    "/app/test_reports/pytest/v4_results.xml",
+    "/app/backend/tests/test_v3_features.py",
+    "/app/backend/tests/test_v2_features.py"
+  ],
+  "action_items": [
+    "BACKEND: return HTTP 400 in POST /api/matches/{id}/ratings when body.ratings contains the caller's own user id (server.py:1253-1255). Currently silently skipped — misleading API contract per V4 spec.",
+    "BACKEND: guard POST /api/groups/{id}/leave when caller is admin — either 400 with clear error, or auto-transfer admin to the next-oldest member before deleting the membership (server.py:769-772).",
+    "BACKEND (nice-to-have): add self-friend-request guard in POST /api/friends/request.",
+    "FRONTEND: migrate any pointerEvents={...} prop usages to style={{pointerEvents:'...'}} to silence deprecation warnings on web.",
+    "STILL OPEN FROM V2/V3 (not re-tested this iter): /api/register-push graceful-degrade when EMERGENT_PUSH_KEY=placeholder, and radius_km filter running in Python instead of Mongo query."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 1646 lines (up from 1352 in V3). Splitting into routers/ (auth, groups, matches, moderation, friends, security, push) is now urgent — single file is hard to maintain and review.",
+    "ratings/reputation aggregate pipeline runs INSIDE the per-rated_id loop (server.py:1270-1288). If a match has 10 rated players, this triggers 10 separate aggregations sequentially per POST. Consider batching or running post-loop once for all rated_ids.",
+    "friendship_key uses sorted user IDs but there is no unique index on the `key` field of db.friendships — two concurrent /friends/request calls could create duplicate rows.",
+    "vote_poll uses `$set: {f'poll.votes.{user_id}': idx}` which is safe for idempotency but there is no length cap on poll.votes (could grow unbounded for very large groups — non-issue at current scale).",
+    "OTP challenge stores plain-text code 000000 in mongo and has no TTL index — production should hash the code and add expireAfterSeconds on created_at.",
+    "change_password does not invalidate existing JWT tokens after password change (JWTs remain valid until expiry). Consider a token_version field on user to force re-login on password change."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v4_features.py (created)",
+    "/app/test_reports/pytest/v4_results.xml (generated)",
+    "/app/test_reports/iteration_4.json (this report)"
+  ],
+  "success_rate": {
+    "backend": "90% (9/10) on V4 suite — 1 spec deviation on self-rating, 1 SKIP for destructive admin-leave",
+    "frontend": "100% of 4 targeted V4 flows (A chat keyboard, B share modal, C member→profile, D map)"
+  },
+  "seed_data_creation": "test_v4_features created a poll message in the Titans group + friendship rows (cleaned up via DELETE /friends/{id} inside test). Chat also has one persistent 'TEST_MSG_v4_keyboard_ok' message from Playwright and multiple TEST_msg_* from prior iterations. Consider a dev-only cleanup endpoint to purge TEST_* messages+polls between test runs.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "V4 test file: /app/backend/tests/test_v4_features.py — 10 tests, structured by feature classes. Fixtures demo_ctx/sarah_ctx/leo_ctx/sample_group_id cache login and the target group. Change-password test SUCCESSFULLY reverts to demo1234 at the end — safe to re-run. Demo user is ADMIN on 'Les Titans du 11ème' as well as 'FC République' (contrary to iter3 note which said 'not just Les Titans') — verified via screenshot showing 'ADMIN' badge on Titans header. Because of this, menu-block is hidden for demo on Titans too, so the V4 spec's 'sheet has 5 items' branch requires testing with a NON-admin account (sarah/leo/tom). Frontend map screen at /map renders a web mock (grid + 8 pins) as expected — react-native-maps only works on native. Chat input on 390x844 sits at y=770, safely above tab bar / keyboard would push it further up. Public profile at /profile/{id} works — tested with member 7fb44147-3ca5-4821-873d-ac3c5d01a528 (Alex Martin himself since Alex is a member of his own group). Poll vote endpoint is idempotent by design (Mongo $set on user_id key); test asserts votes[user_id] == 0 after re-vote and both users tallied after sarah votes.",
+  "rca_of_issue": "Self-rating spec deviation RCA: /app/backend/server.py:1253-1255 loops over body.ratings.items() and uses `continue` when rated_id == caller's id. This means the request is treated as valid (returns 201) but the self entry is silently dropped. Spec 4 required a 400. Fix: add a guard at the top of rate_match:\n\n```python\nif user[\"id\"] in body.ratings:\n    raise HTTPException(400, \"Cannot rate yourself\")\n```\n\nAdmin-leave RCA (not tested destructively): leave_group at server.py:769-772 does an unconditional `db.group_members.delete_one`. If the caller is the only admin, the group becomes admin-less. Fix options: (1) block with 400 if role==admin AND no other admin exists; (2) auto-transfer to oldest member; (3) block admin leave outright with 400. Recommend option 2 for best UX."
+}

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, TextInput, Pressable, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
+import { View, Text, StyleSheet, TextInput, Pressable } from "react-native";
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Screen } from "@/src/components/Screen";
@@ -10,7 +11,7 @@ import { colors, spacing, radius, type as t } from "@/src/theme";
 export default function SignIn() {
   const router = useRouter();
   const { signIn, signInWithGoogle, loading } = useAuth();
-  const [email, setEmail] = useState("demo@pitchfinder.app");
+  const [email, setEmail] = useState("demo@matchup.app");
   const [password, setPassword] = useState("demo1234");
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
@@ -27,14 +28,18 @@ export default function SignIn() {
 
   return (
     <Screen testID="signin-screen">
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareScrollView
+        contentContainerStyle={styles.container}
+        keyboardShouldPersistTaps="handled"
+        bottomOffset={24}
+        style={{ flex: 1 }}
+      >
           <Pressable onPress={() => router.back()} style={styles.back} hitSlop={12}>
             <Ionicons name="chevron-back" size={24} color={colors.text} />
           </Pressable>
 
           <View style={{ marginTop: 8, marginBottom: spacing.xl }}>
-            <Text style={styles.brand}>PITCHFINDER</Text>
+            <Text style={styles.brand}>MATCHUP</Text>
             <Text style={styles.heading}>Bon retour sur le terrain</Text>
             <Text style={styles.sub}>Connecte-toi pour retrouver ton équipe</Text>
           </View>
@@ -121,11 +126,10 @@ export default function SignIn() {
           <View style={styles.demoBox}>
             <Ionicons name="flash" size={14} color={colors.primary} />
             <Text style={styles.demoText}>
-              Compte démo pré-rempli : <Text style={{ color: colors.text }}>demo@pitchfinder.app</Text>
+              Compte démo pré-rempli : <Text style={{ color: colors.text }}>demo@matchup.app</Text>
             </Text>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
     </Screen>
   );
 }

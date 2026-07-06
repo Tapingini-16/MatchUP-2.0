@@ -6,23 +6,31 @@ import {
   FlatList,
   TextInput,
   Pressable,
-  KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Image,
+  Linking,
+  Alert,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { KeyboardAvoidingView, KeyboardEvents } from "react-native-keyboard-controller";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as ImagePicker from "expo-image-picker";
 import dayjs from "dayjs";
 import { Screen } from "@/src/components/Screen";
 import { Avatar } from "@/src/components/Avatar";
 import { ReportModal } from "@/src/components/ReportModal";
+import { PollCard } from "@/src/components/PollCard";
+import { PollComposer } from "@/src/components/PollComposer";
 import { useAuth } from "@/src/context/auth";
 import { api } from "@/src/api/client";
-import { colors, spacing, radius, type as t } from "@/src/theme";
+import { colors, spacing, radius } from "@/src/theme";
 
 export default function ChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const [group, setGroup] = useState<any>(null);
   const [messages, setMessages] = useState<any[]>([]);
@@ -30,7 +38,63 @@ export default function ChatScreen() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [reportTarget, setReportTarget] = useState<{ id: string; name: string } | null>(null);
+  const [showPoll, setShowPoll] = useState(false);
   const listRef = useRef<FlatList>(null);
+
+  const openLocation = () => {
+    if (!group?.field_location) return;
+    const q = encodeURIComponent(group.field_location);
+    const url = group.field_lat && group.field_lng
+      ? `https://www.google.com/maps/search/?api=1&query=${group.field_lat},${group.field_lng}`
+      : `https://www.google.com/maps/search/?api=1&query=${q}`;
+    Linking.openURL(url).catch(() => {});
+  };
+
+  const pickImage = async () => {
+    const current = await ImagePicker.getMediaLibraryPermissionsAsync();
+    let status = current.status;
+    let canAskAgain = current.canAskAgain;
+    if (status !== "granted" && canAskAgain) {
+      const req = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      status = req.status;
+      canAskAgain = req.canAskAgain;
+    }
+    if (status !== "granted") {
+      Alert.alert(
+        "Accès photos requis",
+        "Autorise l'accès à ta galerie pour partager une photo dans le chat.",
+        canAskAgain
+          ? [{ text: "OK" }]
+          : [
+              { text: "Annuler", style: "cancel" },
+              { text: "Ouvrir les réglages", onPress: () => Linking.openSettings() },
+            ],
+      );
+      return;
+    }
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: false,
+      quality: 0.5,
+      base64: true,
+    });
+    if (res.canceled || !res.assets[0]?.base64 || !id) return;
+    setSending(true);
+    try {
+      const msg = await api.sendMessage(id, { image: `data:image/jpeg;base64,${res.assets[0].base64}` });
+      setMessages((prev) => [...prev, msg]);
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const createPoll = async (poll: { question: string; options: string[] }) => {
+    if (!id) return;
+    const msg = await api.sendMessage(id, { poll });
+    setMessages((prev) => [...prev, msg]);
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+  };
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -53,11 +117,19 @@ export default function ChatScreen() {
     return () => clearInterval(interval);
   }, [id, load]);
 
+  // Scroll to bottom when the keyboard appears — critical UX fix.
+  useEffect(() => {
+    const sub = KeyboardEvents.addListener("keyboardDidShow", () => {
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+    });
+    return () => sub.remove();
+  }, []);
+
   const send = async () => {
     if (!text.trim() || !id) return;
     setSending(true);
     try {
-      const msg = await api.sendMessage(id, text.trim());
+      const msg = await api.sendMessage(id, { text: text.trim() });
       setMessages((prev) => [...prev, msg]);
       setText("");
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
@@ -69,7 +141,7 @@ export default function ChatScreen() {
   };
 
   return (
-    <Screen edges={["top", "bottom"]} testID="chat-screen">
+    <Screen edges={["top"]} testID="chat-screen">
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={{ flex: 1 }}
@@ -85,9 +157,11 @@ export default function ChatScreen() {
             </Text>
             <Text style={styles.headerSub}>{group?.members_count || 0} membres</Text>
           </Pressable>
-          <Pressable style={styles.iconBtn} hitSlop={12}>
-            <Ionicons name="ellipsis-vertical" size={18} color={colors.text} />
-          </Pressable>
+          {group?.field_location && (
+            <Pressable style={styles.iconBtn} hitSlop={12} onPress={openLocation} testID="chat-location-button">
+              <Ionicons name="navigate" size={18} color={colors.primary} />
+            </Pressable>
+          )}
         </View>
 
         {loading ? (
@@ -97,7 +171,8 @@ export default function ChatScreen() {
             ref={listRef}
             data={messages}
             keyExtractor={(m) => m.id}
-            contentContainerStyle={{ padding: spacing.base, gap: 4 }}
+            contentContainerStyle={{ padding: spacing.base, gap: 4, paddingBottom: 12 }}
+            keyboardShouldPersistTaps="handled"
             onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
             renderItem={({ item, index }) => {
               const isMe = item.user_id === user?.id;
@@ -112,31 +187,73 @@ export default function ChatScreen() {
                   testID={`msg-${item.id}`}
                 >
                   {!isMe && (
-                    <View style={{ width: 32, marginRight: 8 }}>
+                    <Pressable
+                      onPress={() => router.push(`/profile/${item.user_id}`)}
+                      style={{ width: 32, marginRight: 8 }}
+                      testID={`msg-avatar-${item.user_id}`}
+                    >
                       {showAvatar && <Avatar uri={item.user_photo} name={item.user_name} size={32} />}
+                    </Pressable>
+                  )}
+                  {item.poll ? (
+                    <PollCard
+                      message={item}
+                      userId={user?.id ?? ""}
+                      onVoted={(updated) =>
+                        setMessages((pv) => pv.map((m) => (m.id === updated.id ? updated : m)))
+                      }
+                    />
+                  ) : item.image ? (
+                    <View
+                      style={[
+                        styles.bubble,
+                        isMe
+                          ? { backgroundColor: colors.primary }
+                          : { backgroundColor: colors.surface },
+                        { padding: 4, overflow: "hidden" },
+                      ]}
+                    >
+                      <Image source={{ uri: item.image }} style={styles.msgImage} resizeMode="cover" />
+                      {item.text ? (
+                        <Text style={[styles.msgText, { padding: 6 }, isMe && { color: colors.textOnPrimary }]}>
+                          {item.text}
+                        </Text>
+                      ) : null}
+                      <Text style={[styles.msgTime, { paddingHorizontal: 6, paddingBottom: 4 }, isMe && { color: "rgba(10,15,12,0.6)" }]}>
+                        {dayjs(item.created_at).format("HH:mm")}
+                      </Text>
+                    </View>
+                  ) : (
+                    <View
+                      style={[
+                        styles.bubble,
+                        isMe
+                          ? { backgroundColor: colors.primary, borderTopRightRadius: 4 }
+                          : { backgroundColor: colors.surface, borderTopLeftRadius: 4 },
+                      ]}
+                    >
+                      {!isMe && showAvatar && (
+                        <Text style={styles.senderName}>{item.user_name?.split(" ")[0]}</Text>
+                      )}
+                      <Text style={[styles.msgText, isMe && { color: colors.textOnPrimary }]}>{item.text}</Text>
+                      <Text style={[styles.msgTime, isMe && { color: "rgba(10,15,12,0.6)" }]}>
+                        {dayjs(item.created_at).format("HH:mm")}
+                      </Text>
                     </View>
                   )}
-                  <View
-                    style={[
-                      styles.bubble,
-                      isMe
-                        ? { backgroundColor: colors.primary, borderTopRightRadius: 4 }
-                        : { backgroundColor: colors.surface, borderTopLeftRadius: 4 },
-                    ]}
-                  >
-                    {!isMe && showAvatar && <Text style={styles.senderName}>{item.user_name.split(" ")[0]}</Text>}
-                    <Text style={[styles.msgText, isMe && { color: colors.textOnPrimary }]}>{item.text}</Text>
-                    <Text style={[styles.msgTime, isMe && { color: "rgba(10,15,12,0.6)" }]}>
-                      {dayjs(item.created_at).format("HH:mm")}
-                    </Text>
-                  </View>
                 </Pressable>
               );
             }}
           />
         )}
 
-        <View style={styles.inputBar}>
+        <View style={[styles.inputBar, { paddingBottom: Math.max(spacing.md, insets.bottom) }]}>
+          <Pressable onPress={pickImage} style={styles.attachBtn} testID="chat-photo-button" hitSlop={8}>
+            <Ionicons name="image" size={22} color={colors.textSecondary} />
+          </Pressable>
+          <Pressable onPress={() => setShowPoll(true)} style={styles.attachBtn} testID="chat-poll-button" hitSlop={8}>
+            <Ionicons name="stats-chart" size={20} color={colors.textSecondary} />
+          </Pressable>
           <TextInput
             testID="chat-input"
             value={text}
@@ -146,6 +263,9 @@ export default function ChatScreen() {
             style={styles.input}
             multiline
             maxLength={500}
+            blurOnSubmit={false}
+            returnKeyType="send"
+            onSubmitEditing={() => text.trim() && send()}
           />
           <Pressable
             onPress={send}
@@ -169,6 +289,7 @@ export default function ChatScreen() {
         targetName={reportTarget?.name}
         onClose={() => setReportTarget(null)}
       />
+      <PollComposer visible={showPoll} onClose={() => setShowPoll(false)} onSubmit={createPoll} />
     </Screen>
   );
 }
@@ -200,7 +321,8 @@ const styles = StyleSheet.create({
   inputBar: {
     flexDirection: "row",
     alignItems: "flex-end",
-    padding: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
     borderTopWidth: 1,
     borderTopColor: colors.border,
     gap: spacing.sm,
@@ -229,4 +351,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  attachBtn: { width: 36, height: 44, alignItems: "center", justifyContent: "center" },
+  msgImage: { width: 220, height: 220, borderRadius: 12 },
 });

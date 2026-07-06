@@ -6,9 +6,8 @@ import {
   ScrollView,
   TextInput,
   Pressable,
-  KeyboardAvoidingView,
-  Platform,
 } from "react-native";
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Screen } from "@/src/components/Screen";
@@ -98,8 +97,12 @@ export default function CreateGroup() {
         <View style={{ width: 24 }} />
       </View>
 
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ padding: spacing.base, paddingBottom: 120 }}>
+      <KeyboardAwareScrollView
+        contentContainerStyle={{ padding: spacing.base, paddingBottom: 120 }}
+        keyboardShouldPersistTaps="handled"
+        bottomOffset={24}
+        style={{ flex: 1 }}
+      >
           <Text style={styles.label}>Photo de couverture</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
             {COVERS.map((c) => (
@@ -262,8 +265,7 @@ export default function CreateGroup() {
               <Text style={styles.errorText}>{error}</Text>
             </View>
           )}
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
 
       <View style={styles.saveBar}>
         <Button label="Créer le groupe" onPress={submit} loading={saving} fullWidth size="lg" testID="create-submit-button" />

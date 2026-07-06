@@ -1,13 +1,13 @@
-# PitchFinder — Product Requirements Document (V3)
+# MatchUp — Product Requirements Document (V4)
 
 ## Vision
-PitchFinder is the reference mobile app for local amateur football. It connects amateur players so they can join or create groups of nearby players, easily organize matches, and build a genuine local community.
+MatchUp (formerly PitchFinder) is the reference mobile app for local amateur football. It connects amateur players so they can join or create groups of nearby players, easily organize matches, and build a genuine local community.
 
 ## Tech Stack
-- **Frontend**: Expo Router (React Native), TypeScript, Reanimated, expo-linear-gradient, expo-image, expo-haptics, expo-image-picker, expo-secure-store, expo-notifications, expo-web-browser, expo-linking, @react-native-community/slider
+- **Frontend**: Expo Router (React Native), TypeScript, Reanimated, expo-linear-gradient, expo-image, expo-haptics, expo-image-picker, expo-secure-store, expo-notifications, expo-web-browser, expo-linking, expo-clipboard, @react-native-community/slider, react-native-keyboard-controller, react-native-maps
 - **Backend**: FastAPI, MongoDB (motor), JWT (python-jose), bcrypt, httpx
 - **Fonts**: Barlow Condensed + DM Sans + Space Mono
-- **Theme**: Dark-first premium (Obsidian #090A0C · Terrain Green #1ED760)
+- **Theme**: Dark & Light mode (Obsidian / Airbnb-white)
 
 ## V1 (base — from iteration 1)
 Onboarding + email/password auth + 4 tabs (Home / Discover / Chat / Profile) + Group detail + Chat (5s polling) + Profile with stats/badges + Edit profile + Create group + Notifications + Settings.
@@ -65,7 +65,24 @@ Join request system (admin approval), Match RSVP + team composition (tap-to-assi
 - V2 iter 2: 19/20 backend + all V2 flows (register-push graceful degrade fix)
 - V3 iter 3: 15/15 backend + all V3 flows
 
+## V4 Additions (this iteration — MatchUp rebrand)
+- **Rebrand** PitchFinder → **MatchUp** across UI, docs and seeded demo emails
+- **Keyboard UX Fix**: `react-native-keyboard-controller` (`KeyboardProvider` at root, `KeyboardAwareScrollView` on all forms, `KeyboardAvoidingView` + `keyboardDidShow` auto-scroll in chat) — TextInputs never hidden behind keyboard
+- **Dark / Light theme**: `ThemeProvider` with persisted mode, `darkPalette` + `lightPalette`, `useThemeColors()`
+- **Friends system**: send/accept/decline requests + list + status per user
+- **Polls in chat**: `PollComposer` bottom sheet, `PollCard` with animated vote fill, single-vote per user
+- **Photo sharing in chat**: `expo-image-picker` (with permission fallback → OpenSettings on denied) → base64 image messages
+- **Field location card** on group detail (opens Google Maps deep-link)
+- **Share group** bottom sheet: light card + copier + native `Share.share`
+- **Leave group** action with confirmation `Alert`
+- **Clickable member avatars** in group detail + chat → profile route
+- **Post-match ratings**: `RatingModal` (Niveau / Ponctualité / Fair-play) tied to menu item
+- **Map screen** (`/map`): real `react-native-maps` on iOS/Android (via platform-split `NativeMap.native.tsx` / `.web.tsx`), stylized field mock on web
+- **Security center** (`/security`): OTP for email / phone / MFA (dev accepts `000000`) + password change
+- **Legal / Support pages** (`/legal/[page]`)
+
 ## Deploy Notes
 - `EMERGENT_PUSH_KEY` remains placeholder until deploy pipeline injection
 - `google-services.json` required for Android push (upload during Publish flow)
 - Push not testable in Expo Go — requires real device build
+- `react-native-maps` requires a native build (not testable in web preview — mock shown instead)

@@ -7,9 +7,11 @@ import * as Notifications from "expo-notifications";
 import * as Linking from "expo-linking";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider } from "@/src/context/auth";
+import { ThemeProvider } from "@/src/theme/context";
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
@@ -80,16 +82,20 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#090A0C" }}>
       <SafeAreaProvider>
-        <AuthProvider>
-          <StatusBar barStyle="light-content" backgroundColor="#090A0C" />
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: "#090A0C" },
-              animation: "fade",
-            }}
-          />
-        </AuthProvider>
+        <KeyboardProvider>
+          <ThemeProvider>
+            <AuthProvider>
+              <StatusBar barStyle="light-content" backgroundColor="#090A0C" />
+              <Stack
+                screenOptions={{
+                  headerShown: false,
+                  contentStyle: { backgroundColor: "#090A0C" },
+                  animation: "fade",
+                }}
+              />
+            </AuthProvider>
+          </ThemeProvider>
+        </KeyboardProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

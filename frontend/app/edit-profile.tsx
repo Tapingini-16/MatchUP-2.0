@@ -3,12 +3,10 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TextInput,
   Pressable,
-  KeyboardAvoidingView,
-  Platform,
 } from "react-native";
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -108,8 +106,12 @@ export default function EditProfile() {
         <View style={{ width: 24 }} />
       </View>
 
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={{ padding: spacing.base, paddingBottom: 120 }}>
+      <KeyboardAwareScrollView
+        contentContainerStyle={{ padding: spacing.base, paddingBottom: 120 }}
+        keyboardShouldPersistTaps="handled"
+        bottomOffset={24}
+        style={{ flex: 1 }}
+      >
           <View style={{ alignItems: "center", marginBottom: spacing.xl }}>
             <Pressable onPress={pickPhoto} testID="edit-photo-button">
               <Avatar uri={photo} name={name} size={110} />
@@ -216,8 +218,7 @@ export default function EditProfile() {
               <Pill key={a.key} label={a.label} active={avails.includes(a.key)} onPress={() => toggleAvail(a.key)} />
             ))}
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
 
       <View style={styles.saveBar}>
         <Button

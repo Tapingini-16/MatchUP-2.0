@@ -1,4 +1,4 @@
-// PitchFinder API client — thin fetch wrapper with token injection
+// MatchUp API client — thin fetch wrapper with token injection
 import { storage } from "@/src/utils/storage";
 
 const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL ?? "";
@@ -127,10 +127,15 @@ export const api = {
 
   // Messages
   getMessages: (groupId: string) => request<any[]>(`/groups/${groupId}/messages`),
-  sendMessage: (groupId: string, text: string) =>
+  sendMessage: (groupId: string, body: { text?: string; image?: string; poll?: any }) =>
     request<any>(`/groups/${groupId}/messages`, {
       method: "POST",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(body),
+    }),
+  votePoll: (msgId: string, option_index: number) =>
+    request<any>(`/messages/${msgId}/poll/vote`, {
+      method: "POST",
+      body: JSON.stringify({ option_index }),
     }),
 
   // Matches
@@ -159,6 +164,40 @@ export const api = {
   unblock: (target_type: "user" | "group", target_id: string) =>
     request<any>(`/blocks/${target_type}/${target_id}`, { method: "DELETE" }),
   listBlocks: () => request<any[]>("/blocks"),
+
+  // Friends
+  friendRequest: (to_user_id: string) =>
+    request<any>("/friends/request", { method: "POST", body: JSON.stringify({ to_user_id }) }),
+  friendAccept: (id: string) => request<any>(`/friends/${id}/accept`, { method: "POST" }),
+  friendDecline: (id: string) => request<any>(`/friends/${id}/decline`, { method: "POST" }),
+  friendRemove: (id: string) => request<any>(`/friends/${id}`, { method: "DELETE" }),
+  friends: () => request<any>("/friends"),
+  friendStatus: (id: string) => request<{ status: string }>(`/friends/status/${id}`),
+
+  // Ratings
+  rateMatch: (matchId: string, ratings: Record<string, { level: number; punctuality: number; fairplay: number }>) =>
+    request<any>(`/matches/${matchId}/ratings`, {
+      method: "POST",
+      body: JSON.stringify({ match_id: matchId, ratings }),
+    }),
+  myRatings: (matchId: string) =>
+    request<Record<string, { level: number; punctuality: number; fairplay: number }>>(
+      `/matches/${matchId}/ratings/mine`,
+    ),
+
+  // Security
+  changePassword: (current_password: string, new_password: string) =>
+    request<any>("/users/me/password", {
+      method: "POST",
+      body: JSON.stringify({ current_password, new_password }),
+    }),
+  requestOtp: (target: "email" | "phone" | "mfa") =>
+    request<any>(`/security/otp/request?target=${target}`, { method: "POST" }),
+  verifyOtp: (code: string, target: "email" | "phone" | "mfa") =>
+    request<any>("/security/otp/verify", {
+      method: "POST",
+      body: JSON.stringify({ code, target }),
+    }),
 };
 
 export { ApiError };

@@ -19,7 +19,7 @@ export default function Index() {
 
   return (
     <View style={styles.root}>
-      <Text style={styles.logo}>PITCHFINDER</Text>
+      <Text style={styles.logo}>MATCHUP</Text>
       <ActivityIndicator color={colors.primary} style={{ marginTop: 16 }} />
     </View>
   );

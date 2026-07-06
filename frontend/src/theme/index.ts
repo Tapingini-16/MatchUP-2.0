@@ -1,4 +1,4 @@
-// PitchFinder Design System — dark-first premium tokens
+// MatchUp Design System — dark-first premium tokens
 // Inspired by Spotify / Strava / Discord aesthetic
 
 export const colors = {

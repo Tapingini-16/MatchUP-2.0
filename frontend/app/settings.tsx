@@ -87,7 +87,7 @@ export default function Settings() {
           <Text style={styles.dangerText}>Se déconnecter</Text>
         </Pressable>
 
-        <Text style={styles.version}>PitchFinder · v1.0.0</Text>
+        <Text style={styles.version}>MatchUp · v1.0.0</Text>
       </ScrollView>
     </Screen>
   );

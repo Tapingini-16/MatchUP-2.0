@@ -73,7 +73,7 @@ export default function Onboarding() {
             />
             <Screen edges={["top", "bottom"]}>
               <View style={styles.top}>
-                <Text style={styles.brand}>PITCHFINDER</Text>
+                <Text style={styles.brand}>MATCHUP</Text>
                 <Pressable
                   onPress={() => router.replace("/(auth)/sign-in")}
                   testID="onboarding-skip"

@@ -9,15 +9,19 @@ import {
   ImageBackground,
   TextInput,
   Modal,
+  Alert,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
+import { Linking } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import dayjs from "dayjs";
 import { Screen } from "@/src/components/Screen";
 import { Avatar } from "@/src/components/Avatar";
 import { Button } from "@/src/components/Button";
 import { ReportModal } from "@/src/components/ReportModal";
+import { ShareModal } from "@/src/components/ShareModal";
+import { RatingModal } from "@/src/components/RatingModal";
 import { api } from "@/src/api/client";
 import { colors, spacing, radius, levelMeta } from "@/src/theme";
 
@@ -35,6 +39,8 @@ export default function GroupDetail() {
   const [showRequests, setShowRequests] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [showShare, setShowShare] = useState(false);
+  const [showRating, setShowRating] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -265,6 +271,29 @@ export default function GroupDetail() {
               )}
             </View>
           )}
+
+          {/* Field location (if set) */}
+          {group.field_location && (
+            <Pressable
+              style={styles.locCard}
+              onPress={() => {
+                const url = group.field_lat && group.field_lng
+                  ? `https://www.google.com/maps/search/?api=1&query=${group.field_lat},${group.field_lng}`
+                  : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(group.field_location)}`;
+                Linking.openURL(url).catch(() => {});
+              }}
+              testID="field-location-card"
+            >
+              <View style={styles.locIcon}>
+                <Ionicons name="location" size={20} color={colors.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.locLbl}>TERRAIN HABITUEL</Text>
+                <Text style={styles.locText} numberOfLines={2}>{group.field_location}</Text>
+              </View>
+              <Ionicons name="open-outline" size={18} color={colors.textSecondary} />
+            </Pressable>
+          )}
         </View>
 
         {/* Next matches list */}
@@ -314,11 +343,16 @@ export default function GroupDetail() {
           <Text style={styles.sectionTitle}>Membres ({members.length})</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 12, paddingRight: spacing.base }}>
             {members.slice(0, 12).map((m) => (
-              <View key={m.id} style={styles.memberCard}>
+              <Pressable
+                key={m.id}
+                style={styles.memberCard}
+                onPress={() => router.push(`/profile/${m.id}`)}
+                testID={`member-${m.id}`}
+              >
                 <Avatar uri={m.photo} name={m.name} size={56} verified={m.verified} />
                 <Text style={styles.memberName} numberOfLines={1}>{m.name.split(" ")[0]}</Text>
                 <Text style={styles.memberRole}>{m.role === "admin" ? "Admin" : m.position || "—"}</Text>
-              </View>
+              </Pressable>
             ))}
           </ScrollView>
         </View>
@@ -394,13 +428,55 @@ export default function GroupDetail() {
           <View style={styles.modalCard} testID="group-menu">
             <View style={styles.modalGrip} />
             <Pressable
-              onPress={() => setShowMenu(false)}
+              onPress={() => { setShowMenu(false); setShowShare(true); }}
               style={styles.menuItem}
               testID="menu-share"
             >
               <Ionicons name="share-outline" size={20} color={colors.text} />
               <Text style={styles.menuText}>Partager le groupe</Text>
             </Pressable>
+            {(status === "member" || status === "admin") && (
+              <Pressable
+                onPress={() => {
+                  setShowMenu(false);
+                  if (!id) return;
+                  Alert.alert(
+                    "Quitter le groupe",
+                    "Es-tu sûr de vouloir quitter ce groupe ?",
+                    [
+                      { text: "Annuler", style: "cancel" },
+                      {
+                        text: "Quitter",
+                        style: "destructive",
+                        onPress: async () => {
+                          try {
+                            await api.leaveGroup(id);
+                            router.back();
+                          } catch (e) {
+                            console.log("leave error", e);
+                          }
+                        },
+                      },
+                    ],
+                  );
+                }}
+                style={styles.menuItem}
+                testID="menu-leave"
+              >
+                <Ionicons name="exit-outline" size={20} color={colors.accent} />
+                <Text style={[styles.menuText, { color: colors.accent }]}>Quitter le groupe</Text>
+              </Pressable>
+            )}
+            {(status === "member" || status === "admin") && matches.length > 0 && (
+              <Pressable
+                onPress={() => { setShowMenu(false); setShowRating(true); }}
+                style={styles.menuItem}
+                testID="menu-rate"
+              >
+                <Ionicons name="star-outline" size={20} color={colors.primary} />
+                <Text style={styles.menuText}>Noter les joueurs du dernier match</Text>
+              </Pressable>
+            )}
             <Pressable
               onPress={() => {
                 setShowMenu(false);
@@ -440,6 +516,13 @@ export default function GroupDetail() {
         targetId={id ?? ""}
         targetName={group.name}
         onClose={() => setShowReport(false)}
+      />
+      <ShareModal visible={showShare} onClose={() => setShowShare(false)} groupId={id ?? ""} groupName={group.name} />
+      <RatingModal
+        visible={showRating}
+        matchId={matches[0]?.id ?? ""}
+        players={members.filter((m) => (matches[0]?.players ?? []).includes(m.id))}
+        onClose={() => setShowRating(false)}
       />
     </View>
   );
@@ -531,4 +614,47 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
     padding: 12, minHeight: 90, textAlignVertical: "top", color: colors.text, fontFamily: "DMSans-Regular", fontSize: 14,
   },
+  menuItem: {
+    flexDirection: "row", alignItems: "center", gap: 12,
+    paddingVertical: 14, paddingHorizontal: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
+  },
+  menuText: { fontFamily: "DMSans-Bold", color: colors.text, fontSize: 15 },
+  metaCard: {
+    marginTop: spacing.md, padding: spacing.md,
+    backgroundColor: colors.surface, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  metaBlock: {},
+  metaLabel: {
+    fontFamily: "DMSans-Bold", fontSize: 10, letterSpacing: 1,
+    color: colors.textSecondary, marginBottom: 8, textTransform: "uppercase",
+  },
+  metaChips: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  dayChip: {
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill,
+    backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.border,
+  },
+  dayChipText: { fontFamily: "DMSans-Bold", color: colors.text, fontSize: 12 },
+  posChip: {
+    flexDirection: "row", alignItems: "center", gap: 4,
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill,
+    backgroundColor: colors.primaryMuted, borderWidth: 1, borderColor: colors.primaryDim,
+  },
+  posChipText: { fontFamily: "DMSans-Bold", color: colors.primary, fontSize: 12 },
+  locCard: {
+    marginTop: spacing.md, padding: spacing.md,
+    backgroundColor: colors.surface, borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.border,
+    flexDirection: "row", alignItems: "center", gap: 12,
+  },
+  locIcon: {
+    width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primaryMuted,
+    alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.primaryDim,
+  },
+  locLbl: {
+    fontFamily: "DMSans-Bold", fontSize: 10, letterSpacing: 1,
+    color: colors.textSecondary, marginBottom: 2, textTransform: "uppercase",
+  },
+  locText: { fontFamily: "DMSans-Medium", color: colors.text, fontSize: 14, lineHeight: 18 },
 });

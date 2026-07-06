@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { View, Text, StyleSheet, TextInput, Pressable, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
+import { View, Text, StyleSheet, TextInput, Pressable } from "react-native";
+import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Screen } from "@/src/components/Screen";
@@ -29,14 +30,18 @@ export default function SignUp() {
 
   return (
     <Screen testID="signup-screen">
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareScrollView
+        contentContainerStyle={styles.container}
+        keyboardShouldPersistTaps="handled"
+        bottomOffset={24}
+        style={{ flex: 1 }}
+      >
           <Pressable onPress={() => router.back()} style={styles.back} hitSlop={12}>
             <Ionicons name="chevron-back" size={24} color={colors.text} />
           </Pressable>
 
           <View style={{ marginTop: 8, marginBottom: spacing.xl }}>
-            <Text style={styles.brand}>PITCHFINDER</Text>
+            <Text style={styles.brand}>MATCHUP</Text>
             <Text style={styles.heading}>Rejoins le mouvement</Text>
             <Text style={styles.sub}>Construis ton profil de joueur en 30 secondes</Text>
           </View>
@@ -109,8 +114,7 @@ export default function SignUp() {
               <Text style={{ color: colors.primary, fontFamily: "DMSans-Bold" }}>Se connecter</Text>
             </Text>
           </Pressable>
-        </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAwareScrollView>
     </Screen>
   );
 }
