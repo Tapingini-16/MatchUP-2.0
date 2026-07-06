@@ -768,6 +768,23 @@ async def cancel_my_join_request(group_id: str, user: dict = Depends(current_use
 
 @api.post("/groups/{group_id}/leave")
 async def leave_group(group_id: str, user: dict = Depends(current_user)):
+    g = await db.groups.find_one({"id": group_id})
+    if not g:
+        raise HTTPException(404, "Group not found")
+    if g.get("admin_id") == user["id"]:
+        # Try to transfer admin to the oldest other member, else 400
+        other = await db.group_members.find_one(
+            {"group_id": group_id, "user_id": {"$ne": user["id"]}},
+            sort=[("joined_at", 1)],
+        )
+        if not other:
+            raise HTTPException(
+                400,
+                "Admin cannot leave a group without transferring ownership (no other members).",
+            )
+        await db.groups.update_one(
+            {"id": group_id}, {"$set": {"admin_id": other["user_id"]}}
+        )
     await db.group_members.delete_one({"group_id": group_id, "user_id": user["id"]})
     return {"status": "left"}
 
@@ -1252,7 +1269,7 @@ async def rate_match(match_id: str, body: MatchRatingCreate, user: dict = Depend
     now = datetime.now(timezone.utc).isoformat()
     for rated_id, scores in body.ratings.items():
         if rated_id == user["id"]:
-            continue
+            raise HTTPException(400, "Cannot rate yourself")
         await db.ratings.update_one(
             {"match_id": match_id, "rater_id": user["id"], "rated_id": rated_id},
             {"$set": {
