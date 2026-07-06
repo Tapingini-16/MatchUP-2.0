@@ -1,0 +1,51 @@
+{
+  "summary": "PitchFinder V2 iteration 2 testing — 3 new feature groups validated. Backend: 19/20 pytest cases pass in /app/backend/tests/test_v2_features.py (9 join-request tests, 8 match RSVP/team tests, 1 Google auth 401, 2 push). The single failing test is a REAL bug: POST /api/register-push returns 500 when EMERGENT_PUSH_KEY=placeholder — spec requires graceful degrade. Frontend: full mobile Playwright flow validated on 390x844 → Google button visible on sign-in, fresh signup user sees 'Demander à rejoindre' → modal → send → CTA becomes 'Annuler la demande' with EN ATTENTE pill; admin sees yellow '1 demande en attente' section with approve/reject; approve makes applicant a member (verified via API); match card tap navigates to match/<id>; match detail shows big date hero + stats + 3 RSVP buttons + 3 team zones (A/B/Banc) + NON AFFECTÉS pool; RSVP persists across reload; admin taps player chip → 'Ici' drop button appears in each team zone → tap moves player into Équipe A (persisted via API). Deprecated packages check: none found. Non-blocking warnings: 'props.pointerEvents is deprecated' (already logged in it1), '[expo-notifications] Listening to push token changes not yet fully supported on web' (expected on web preview).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/register-push",
+        "issue": "Returns HTTP 500 ('EMERGENT_PUSH_KEY missing or invalid') when EMERGENT_PUSH_KEY=placeholder in .env — Emergent push relay responds 401 and server.py:384 escalates that to 500. Spec explicitly requires graceful degrade in this scenario so the app doesn't break for newly-installed clients. Fix: on Emergent 401 response, log warning and return {status:'skipped'} with 201 instead of raising 500 (only 5xx from provider should map to 502). Reproduce: curl -H 'Authorization: Bearer <token>' -H 'Content-Type: application/json' -d '{\"platform\":\"ios\",\"device_token\":\"tok_x\"}' <BASE>/api/register-push → 500.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "react-native-web (upstream)",
+        "issue": "Console warning 'props.pointerEvents is deprecated. Use style.pointerEvents' still appears on onboarding/sign-in flow. Non-blocking, coming from a library. Reference: previously flagged in iteration_1.json."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v2_features.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/v2_results.xml"
+  ],
+  "action_items": [
+    "Fix /api/register-push graceful degrade: when the Emergent push relay returns 401 (placeholder key case), do NOT raise HTTPException 500 — swallow like other exceptions (logger.warning + return {status:'skipped'}). Only escalate to 502 for provider 5xx. Location: /app/backend/server.py:383-386.",
+    "Optional: track down remaining 'props.pointerEvents' warning source (likely in react-native-web internals or expo-router). Non-blocking."
+  ],
+  "critical_code_review_comments": [
+    "server.py grown to 1179 lines (from 790 in it1). Split into routers/ (auth, groups, join_requests, matches, push) is now overdue.",
+    "match_to_public correctly returns rsvps map + teams a/b/bench + users dict. Non-admin can trigger it via GET /matches/{id}: no membership guard on read — acceptable if you consider match metadata semi-public, but consider adding is_member check for consistency with /messages endpoint.",
+    "join_requests collection has no unique index on (group_id,user_id,status='pending'); race condition between two rapid POST /join calls could create two pending requests. Add a compound partial index or an atomic upsert.",
+    "GoogleSessionBody uses str for session_id — no length/format validation. Not exploitable (provider does the real check) but consider min_length.",
+    "assign_team does not verify the target user_id is actually in match.players — admin could put a non-participant in a team. Not urgent but worth a check."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v2_features.py (created)",
+    "/app/test_reports/pytest/v2_results.xml (generated)",
+    "/app/test_reports/iteration_2.json (this report)"
+  ],
+  "success_rate": {"backend": "95% (19/20)", "frontend": "100% of tested V2 flows"},
+  "seed_data_creation": "Pytest and Playwright runs created several TEST_ / UITEST_ / testv2_ groups + fresh users (uitest_*, uiapp_*, testv2_*, testcancel_*, testrej_*@example.com). These persist; consider a dev-only cleanup endpoint or a nightly janitor.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "V2 test file lives at /app/backend/tests/test_v2_features.py — reuse. Fresh signup users are needed for join-request tests because all 4 demo accounts are already members of most seeded groups. Frontend testIDs confirmed present and working: signin-google-button, group-cta-button, join-modal, join-message-input, join-submit-button, join-requests-toggle, approve-{req_id}, reject-{req_id}, match-{id}, match-detail-screen, rsvp-going|maybe|decline, player-{uid}, drop-Équipe A|Équipe B|Banc. IMPORTANT: drop-* buttons only render AFTER tapping a player chip — the initial state hides them. Emergent Google Auth cannot be end-to-end tested in preview (requires real Emergent session cookie); the 401 endpoint validation is the correct proxy. EMERGENT_PUSH_KEY=placeholder currently causes 500 on /api/register-push — that's the single open backend bug.",
+  "rca_of_issue": "RCA — POST /api/register-push 500: When EMERGENT_PUSH_KEY is the placeholder string, the Emergent push relay's Bearer-auth check fails and responds 401. server.py lines 383-384 explicitly convert that 401 into HTTPException(status_code=500, detail='EMERGENT_PUSH_KEY missing or invalid'). This is raised INSIDE the try, and the following `except HTTPException: raise` re-throws it (bypassing the generic Exception handler that logs+swallows). Mitigation: change lines 383-384 to `if resp.status_code == 401: logger.warning('EMERGENT_PUSH_KEY missing/invalid; skipping push register'); return {'status': 'skipped'}` (or simply remove the HTTPException raise and let the code fall through to the return at line 392). Only 5xx from the provider should map to 502. This preserves the ability to detect real 401s in production because the deployer will inject a valid key."
+}

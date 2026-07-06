@@ -9,7 +9,7 @@ import { colors, spacing, radius, type as t } from "@/src/theme";
 
 export default function SignIn() {
   const router = useRouter();
-  const { signIn, loading } = useAuth();
+  const { signIn, signInWithGoogle, loading } = useAuth();
   const [email, setEmail] = useState("demo@pitchfinder.app");
   const [password, setPassword] = useState("demo1234");
   const [error, setError] = useState<string | null>(null);
@@ -89,6 +89,28 @@ export default function SignIn() {
             testID="signin-submit-button"
           />
 
+          <View style={styles.divider}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>OU</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <Pressable
+            onPress={async () => {
+              try {
+                await signInWithGoogle();
+                router.replace("/(tabs)");
+              } catch (e: any) {
+                setError(e.message || "Google Auth impossible");
+              }
+            }}
+            style={styles.googleBtn}
+            testID="signin-google-button"
+          >
+            <Ionicons name="logo-google" size={18} color={colors.text} />
+            <Text style={styles.googleText}>Continuer avec Google</Text>
+          </Pressable>
+
           <Pressable onPress={() => router.replace("/(auth)/sign-up")} style={{ marginTop: spacing.xl }}>
             <Text style={styles.footer}>
               Pas encore de compte ?{" "}
@@ -161,4 +183,24 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   demoText: { color: colors.textSecondary, fontFamily: "DMSans-Regular", fontSize: 12, flex: 1 },
+  divider: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: spacing.lg,
+    gap: 12,
+  },
+  dividerLine: { flex: 1, height: 1, backgroundColor: colors.border },
+  dividerText: { fontFamily: "DMSans-Medium", color: colors.textMuted, fontSize: 11, letterSpacing: 1 },
+  googleBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    height: 50,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  googleText: { fontFamily: "DMSans-Bold", color: colors.text, fontSize: 15 },
 });

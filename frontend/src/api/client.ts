@@ -69,6 +69,16 @@ export const api = {
       body: JSON.stringify(body),
     }),
   me: () => request<any>("/auth/me"),
+  googleLogin: (session_id: string) =>
+    request<{ token: string; user: any }>("/auth/google", {
+      method: "POST",
+      body: JSON.stringify({ session_id }),
+    }),
+  registerPush: (platform: string, device_token: string) =>
+    request<any>("/register-push", {
+      method: "POST",
+      body: JSON.stringify({ platform, device_token }),
+    }),
 
   // User
   updateMe: (body: any) => request<any>("/users/me", { method: "PATCH", body: JSON.stringify(body) }),
@@ -86,11 +96,21 @@ export const api = {
   },
   getGroup: (id: string) => request<any>(`/groups/${id}`),
   createGroup: (body: any) => request<any>("/groups", { method: "POST", body: JSON.stringify(body) }),
-  joinGroup: (id: string) =>
-    request<any>(`/groups/${id}/join`, { method: "POST", body: JSON.stringify({}) }),
+  joinGroup: (id: string, message?: string) =>
+    request<any>(`/groups/${id}/join`, {
+      method: "POST",
+      body: JSON.stringify({ message: message ?? null }),
+    }),
+  cancelJoin: (id: string) =>
+    request<any>(`/groups/${id}/join-requests/cancel`, { method: "POST" }),
   leaveGroup: (id: string) => request<any>(`/groups/${id}/leave`, { method: "POST" }),
   groupMembers: (id: string) => request<any[]>(`/groups/${id}/members`),
   myGroups: () => request<any[]>("/groups/mine/list"),
+  joinRequests: (id: string) => request<any[]>(`/groups/${id}/join-requests`),
+  approveRequest: (groupId: string, reqId: string) =>
+    request<any>(`/groups/${groupId}/join-requests/${reqId}/approve`, { method: "POST" }),
+  rejectRequest: (groupId: string, reqId: string) =>
+    request<any>(`/groups/${groupId}/join-requests/${reqId}/reject`, { method: "POST" }),
 
   // Messages
   getMessages: (groupId: string) => request<any[]>(`/groups/${groupId}/messages`),
@@ -102,8 +122,16 @@ export const api = {
 
   // Matches
   listMatches: (groupId: string) => request<any[]>(`/groups/${groupId}/matches`),
+  getMatch: (id: string) => request<any>(`/matches/${id}`),
   createMatch: (body: any) =>
     request<any>("/matches", { method: "POST", body: JSON.stringify(body) }),
+  rsvp: (id: string, status: "going" | "maybe" | "decline") =>
+    request<any>(`/matches/${id}/rsvp`, { method: "POST", body: JSON.stringify({ status }) }),
+  assignTeam: (matchId: string, user_id: string, team: "a" | "b" | "bench" | "none") =>
+    request<any>(`/matches/${matchId}/team`, {
+      method: "POST",
+      body: JSON.stringify({ user_id, team }),
+    }),
   joinMatch: (id: string) => request<any>(`/matches/${id}/join`, { method: "POST" }),
   leaveMatch: (id: string) => request<any>(`/matches/${id}/leave`, { method: "POST" }),
 };

@@ -7,6 +7,8 @@ import {
   Pressable,
   ActivityIndicator,
   ImageBackground,
+  TextInput,
+  Modal,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
@@ -16,7 +18,7 @@ import { Screen } from "@/src/components/Screen";
 import { Avatar } from "@/src/components/Avatar";
 import { Button } from "@/src/components/Button";
 import { api } from "@/src/api/client";
-import { colors, spacing, radius, type as t, levelMeta } from "@/src/theme";
+import { colors, spacing, radius, levelMeta } from "@/src/theme";
 
 export default function GroupDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -24,8 +26,12 @@ export default function GroupDetail() {
   const [group, setGroup] = useState<any>(null);
   const [members, setMembers] = useState<any[]>([]);
   const [matches, setMatches] = useState<any[]>([]);
+  const [requests, setRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [joining, setJoining] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  const [joinMsg, setJoinMsg] = useState("");
+  const [showRequests, setShowRequests] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -38,6 +44,12 @@ export default function GroupDetail() {
       setGroup(g);
       setMembers(m);
       setMatches(mt);
+      if (g.is_admin) {
+        try {
+          const r = await api.joinRequests(id);
+          setRequests(r);
+        } catch {}
+      }
     } catch (e) {
       console.log(e);
     } finally {
@@ -49,21 +61,40 @@ export default function GroupDetail() {
     load();
   }, [load]);
 
-  const onJoin = async () => {
-    if (!id || !group) return;
-    setJoining(true);
+  const doJoin = async () => {
+    if (!id) return;
+    setBusy(true);
     try {
-      if (group.is_member) {
-        router.push(`/chat/${id}`);
-      } else {
-        await api.joinGroup(id);
-        await load();
-      }
-    } catch (e: any) {
-      console.log("join error", e);
+      await api.joinGroup(id, joinMsg.trim() || undefined);
+      setShowJoinModal(false);
+      setJoinMsg("");
+      await load();
     } finally {
-      setJoining(false);
+      setBusy(false);
     }
+  };
+
+  const cancelJoin = async () => {
+    if (!id) return;
+    setBusy(true);
+    try {
+      await api.cancelJoin(id);
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const approve = async (reqId: string) => {
+    if (!id) return;
+    await api.approveRequest(id, reqId);
+    await load();
+  };
+
+  const reject = async (reqId: string) => {
+    if (!id) return;
+    await api.rejectRequest(id, reqId);
+    await load();
   };
 
   if (loading || !group) {
@@ -76,6 +107,26 @@ export default function GroupDetail() {
 
   const lvl = levelMeta(group.level);
   const next = matches[0];
+  const status = group.join_status; // none | pending | member | admin
+
+  const ctaLabel =
+    status === "admin"
+      ? "Voir le chat"
+      : status === "member"
+        ? "Voir le chat"
+        : status === "pending"
+          ? "Annuler la demande"
+          : "Demander à rejoindre";
+
+  const ctaAction = () => {
+    if (status === "member" || status === "admin") {
+      router.push(`/chat/${id}`);
+    } else if (status === "pending") {
+      cancelJoin();
+    } else {
+      setShowJoinModal(true);
+    }
+  };
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }} testID="group-detail-screen">
@@ -98,9 +149,23 @@ export default function GroupDetail() {
             </Pressable>
           </View>
 
-          <View style={styles.heroBottom}>
-            <View style={[styles.levelPill, { backgroundColor: lvl.color + "22", borderColor: lvl.color }]}>
-              <Text style={[styles.levelText, { color: lvl.color }]}>{lvl.label}</Text>
+          <View>
+            <View style={styles.heroPills}>
+              <View style={[styles.levelPill, { backgroundColor: lvl.color + "22", borderColor: lvl.color }]}>
+                <Text style={[styles.levelText, { color: lvl.color }]}>{lvl.label}</Text>
+              </View>
+              {status === "admin" && (
+                <View style={[styles.levelPill, { backgroundColor: colors.primaryMuted, borderColor: colors.primary }]}>
+                  <Ionicons name="ribbon" size={11} color={colors.primary} />
+                  <Text style={[styles.levelText, { color: colors.primary, marginLeft: 4 }]}>Admin</Text>
+                </View>
+              )}
+              {status === "pending" && (
+                <View style={[styles.levelPill, { backgroundColor: colors.accent + "22", borderColor: colors.accent }]}>
+                  <Ionicons name="time" size={11} color={colors.accent} />
+                  <Text style={[styles.levelText, { color: colors.accent, marginLeft: 4 }]}>En attente</Text>
+                </View>
+              )}
             </View>
             <Text style={styles.title}>{group.name}</Text>
             <View style={styles.metaRow}>
@@ -116,13 +181,46 @@ export default function GroupDetail() {
               <View style={styles.dotSep} />
               <View style={styles.metaItem}>
                 <Ionicons name="people" size={14} color={colors.textSecondary} />
-                <Text style={styles.metaText}>
-                  {group.members_count}/{group.max_members}
-                </Text>
+                <Text style={styles.metaText}>{group.members_count}/{group.max_members}</Text>
               </View>
             </View>
           </View>
         </ImageBackground>
+
+        {/* Admin: pending requests */}
+        {status === "admin" && requests.length > 0 && (
+          <View style={styles.section}>
+            <Pressable onPress={() => setShowRequests((s) => !s)} style={styles.reqHeader} testID="join-requests-toggle">
+              <View style={{ flex: 1 }}>
+                <Text style={styles.reqTitle}>{requests.length} demande{requests.length > 1 ? "s" : ""} en attente</Text>
+                <Text style={styles.reqSub}>Touche pour {showRequests ? "masquer" : "gérer"}</Text>
+              </View>
+              <View style={styles.reqBadge}>
+                <Text style={styles.reqBadgeText}>{requests.length}</Text>
+              </View>
+              <Ionicons name={showRequests ? "chevron-up" : "chevron-down"} size={18} color={colors.textSecondary} />
+            </Pressable>
+            {showRequests && (
+              <View style={{ marginTop: spacing.sm, gap: spacing.sm }}>
+                {requests.map((r) => (
+                  <View key={r.id} style={styles.reqItem} testID={`req-${r.id}`}>
+                    <Avatar uri={r.user_photo} name={r.user_name} size={44} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.reqName}>{r.user_name}</Text>
+                      {r.message ? <Text style={styles.reqMsg} numberOfLines={2}>&ldquo;{r.message}&rdquo;</Text> : null}
+                    </View>
+                    <Pressable onPress={() => reject(r.id)} style={styles.reqRejectBtn} testID={`reject-${r.id}`} hitSlop={8}>
+                      <Ionicons name="close" size={18} color={colors.danger} />
+                    </Pressable>
+                    <Pressable onPress={() => approve(r.id)} style={styles.reqApproveBtn} testID={`approve-${r.id}`} hitSlop={8}>
+                      <Ionicons name="checkmark" size={18} color={colors.textOnPrimary} />
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
 
         {/* Description */}
         <View style={styles.section}>
@@ -130,31 +228,45 @@ export default function GroupDetail() {
           <Text style={styles.description}>{group.description}</Text>
         </View>
 
-        {/* Next match */}
-        {next && (
+        {/* Next matches list */}
+        {matches.length > 0 && (
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Prochain match</Text>
-            <View style={styles.matchCard}>
-              <View style={styles.matchDate}>
-                <Text style={styles.matchDay}>{dayjs(next.date).format("DD")}</Text>
-                <Text style={styles.matchMonth}>{dayjs(next.date).format("MMM").toUpperCase()}</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.matchTitle}>{next.title}</Text>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 }}>
-                  <Ionicons name="location" size={13} color={colors.textSecondary} />
-                  <Text style={styles.matchLoc}>{next.location}</Text>
-                </View>
-                <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
-                  <Ionicons name="time" size={13} color={colors.textSecondary} />
-                  <Text style={styles.matchLoc}>{dayjs(next.date).format("HH[h]mm")}</Text>
-                </View>
-              </View>
-              <View style={styles.matchPlayers}>
-                <Text style={styles.matchPlayersNum}>{next.players.length}/{next.max_players}</Text>
-                <Text style={styles.matchPlayersLbl}>joueurs</Text>
-              </View>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <Text style={styles.sectionTitle}>Matchs</Text>
+              {(status === "member" || status === "admin") && (
+                <Pressable onPress={() => router.push({ pathname: "/create-match", params: { group_id: id } } as any)} hitSlop={8}>
+                  <Text style={{ color: colors.primary, fontFamily: "DMSans-Bold", fontSize: 13 }}>+ Ajouter</Text>
+                </Pressable>
+              )}
             </View>
+            {matches.slice(0, 4).map((m) => (
+              <Pressable
+                key={m.id}
+                onPress={() => router.push(`/match/${m.id}` as any)}
+                style={styles.matchCard}
+                testID={`match-${m.id}`}
+              >
+                <View style={styles.matchDate}>
+                  <Text style={styles.matchDay}>{dayjs(m.date).format("DD")}</Text>
+                  <Text style={styles.matchMonth}>{dayjs(m.date).format("MMM").toUpperCase()}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.matchTitle}>{m.title}</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 }}>
+                    <Ionicons name="location" size={13} color={colors.textSecondary} />
+                    <Text style={styles.matchLoc}>{m.location}</Text>
+                  </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 }}>
+                    <Ionicons name="time" size={13} color={colors.textSecondary} />
+                    <Text style={styles.matchLoc}>{dayjs(m.date).format("HH[h]mm")}</Text>
+                  </View>
+                </View>
+                <View style={styles.matchPlayers}>
+                  <Text style={styles.matchPlayersNum}>{(m.players || []).length}/{m.max_players}</Text>
+                  <Text style={styles.matchPlayersLbl}>joueurs</Text>
+                </View>
+              </Pressable>
+            ))}
           </View>
         )}
 
@@ -165,9 +277,7 @@ export default function GroupDetail() {
             {members.slice(0, 12).map((m) => (
               <View key={m.id} style={styles.memberCard}>
                 <Avatar uri={m.photo} name={m.name} size={56} verified={m.verified} />
-                <Text style={styles.memberName} numberOfLines={1}>
-                  {m.name.split(" ")[0]}
-                </Text>
+                <Text style={styles.memberName} numberOfLines={1}>{m.name.split(" ")[0]}</Text>
                 <Text style={styles.memberRole}>{m.role === "admin" ? "Admin" : m.position || "—"}</Text>
               </View>
             ))}
@@ -178,26 +288,65 @@ export default function GroupDetail() {
       {/* Sticky bottom action */}
       <View style={styles.bottomBar}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.bottomLabel}>{group.is_member ? "Tu es membre" : "Places restantes"}</Text>
+          <Text style={styles.bottomLabel}>
+            {status === "member" || status === "admin"
+              ? "Tu es membre"
+              : status === "pending"
+                ? "Demande envoyée"
+                : "Places restantes"}
+          </Text>
           <Text style={styles.bottomValue}>
-            {group.is_member ? "✓ Accès complet" : `${group.spots_left} places`}
+            {status === "member" || status === "admin"
+              ? "✓ Accès complet"
+              : status === "pending"
+                ? "En attente admin"
+                : `${group.spots_left} places`}
           </Text>
         </View>
         <Button
-          label={group.is_member ? "Voir le chat" : "Rejoindre"}
-          onPress={onJoin}
-          loading={joining}
+          label={ctaLabel}
+          onPress={ctaAction}
+          loading={busy}
           size="lg"
-          testID="group-join-button"
+          variant={status === "pending" ? "secondary" : "primary"}
+          testID="group-cta-button"
           icon={
-            group.is_member ? (
+            status === "member" || status === "admin" ? (
               <Ionicons name="chatbubbles" size={18} color={colors.textOnPrimary} />
+            ) : status === "pending" ? (
+              <Ionicons name="close-circle" size={18} color={colors.text} />
             ) : (
               <Ionicons name="add" size={20} color={colors.textOnPrimary} />
             )
           }
         />
       </View>
+
+      {/* Join request modal */}
+      <Modal visible={showJoinModal} transparent animationType="slide" onRequestClose={() => setShowJoinModal(false)}>
+        <View style={styles.modalWrap}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setShowJoinModal(false)} />
+          <View style={styles.modalCard} testID="join-modal">
+            <View style={styles.modalGrip} />
+            <Text style={styles.modalTitle}>Demander à rejoindre {group.name}</Text>
+            <Text style={styles.modalSub}>Un petit mot pour l&apos;admin ? (optionnel)</Text>
+            <TextInput
+              testID="join-message-input"
+              value={joinMsg}
+              onChangeText={setJoinMsg}
+              placeholder="Salut ! J&apos;aimerais rejoindre votre groupe pour..."
+              placeholderTextColor={colors.textMuted}
+              style={styles.modalInput}
+              multiline
+              maxLength={200}
+            />
+            <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
+              <Button label="Annuler" variant="ghost" onPress={() => setShowJoinModal(false)} style={{ flex: 1 } as any} />
+              <Button label="Envoyer" onPress={doJoin} loading={busy} style={{ flex: 1 } as any} testID="join-submit-button" />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -206,23 +355,13 @@ const styles = StyleSheet.create({
   hero: { height: 340, justifyContent: "space-between", padding: spacing.base, paddingTop: 60 },
   heroTop: { flexDirection: "row", justifyContent: "space-between" },
   iconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(9,10,12,0.65)",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: colors.border,
+    width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(9,10,12,0.65)",
+    alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.border,
   },
-  heroBottom: {},
+  heroPills: { flexDirection: "row", gap: 6, marginBottom: spacing.sm },
   levelPill: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    marginBottom: spacing.sm,
+    flexDirection: "row", alignItems: "center", alignSelf: "flex-start",
+    paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.pill, borderWidth: 1,
   },
   levelText: { fontFamily: "DMSans-Bold", fontSize: 11, letterSpacing: 0.6, textTransform: "uppercase" },
   title: { fontFamily: "BarlowCondensed-Bold", fontSize: 34, color: colors.text, letterSpacing: -0.5, marginBottom: 6 },
@@ -233,25 +372,36 @@ const styles = StyleSheet.create({
   section: { padding: spacing.base },
   sectionTitle: { fontFamily: "BarlowCondensed-Bold", fontSize: 20, color: colors.text, marginBottom: spacing.md, letterSpacing: -0.2 },
   description: { fontFamily: "DMSans-Regular", color: colors.text, lineHeight: 22, fontSize: 14 },
+  reqHeader: {
+    flexDirection: "row", alignItems: "center", padding: spacing.base,
+    backgroundColor: colors.primaryMuted, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.primaryDim, gap: 8,
+  },
+  reqTitle: { fontFamily: "DMSans-Bold", color: colors.primary, fontSize: 14 },
+  reqSub: { fontFamily: "DMSans-Regular", color: colors.textSecondary, fontSize: 12, marginTop: 2 },
+  reqBadge: { width: 26, height: 26, borderRadius: 13, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
+  reqBadgeText: { fontFamily: "BarlowCondensed-Bold", color: colors.textOnPrimary, fontSize: 14 },
+  reqItem: {
+    flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md,
+    backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border,
+  },
+  reqName: { fontFamily: "DMSans-Bold", color: colors.text, fontSize: 14 },
+  reqMsg: { fontFamily: "DMSans-Regular", color: colors.textSecondary, fontSize: 12, marginTop: 2 },
+  reqRejectBtn: {
+    width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(255,90,95,0.14)",
+    alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(255,90,95,0.4)",
+  },
+  reqApproveBtn: {
+    width: 40, height: 40, borderRadius: 20, backgroundColor: colors.primary,
+    alignItems: "center", justifyContent: "center",
+  },
   matchCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: spacing.base,
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: spacing.base,
+    flexDirection: "row", alignItems: "center", padding: spacing.base,
+    backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border,
+    gap: spacing.base, marginTop: spacing.sm,
   },
   matchDate: {
-    width: 60,
-    height: 60,
-    borderRadius: radius.md,
-    backgroundColor: colors.primaryMuted,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: colors.primaryDim,
+    width: 60, height: 60, borderRadius: radius.md, backgroundColor: colors.primaryMuted,
+    alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: colors.primaryDim,
   },
   matchDay: { fontFamily: "BarlowCondensed-Bold", fontSize: 26, color: colors.primary, lineHeight: 28 },
   matchMonth: { fontFamily: "DMSans-Bold", fontSize: 10, color: colors.primary, letterSpacing: 1 },
@@ -264,19 +414,22 @@ const styles = StyleSheet.create({
   memberName: { fontFamily: "DMSans-Bold", color: colors.text, fontSize: 12, marginTop: 4 },
   memberRole: { fontFamily: "DMSans-Regular", color: colors.textSecondary, fontSize: 10 },
   bottomBar: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: spacing.base,
-    paddingBottom: spacing.xl,
-    backgroundColor: colors.bgElevated,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.md,
+    position: "absolute", bottom: 0, left: 0, right: 0, padding: spacing.base, paddingBottom: spacing.xl,
+    backgroundColor: colors.bgElevated, borderTopWidth: 1, borderTopColor: colors.border,
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
   },
   bottomLabel: { fontFamily: "DMSans-Medium", color: colors.textSecondary, fontSize: 11, letterSpacing: 0.4, textTransform: "uppercase" },
   bottomValue: { fontFamily: "BarlowCondensed-Bold", color: colors.text, fontSize: 18, marginTop: 2 },
+  modalWrap: { flex: 1, justifyContent: "flex-end", backgroundColor: colors.scrim },
+  modalCard: {
+    backgroundColor: colors.bgElevated, borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    padding: spacing.xl, paddingBottom: 40, borderTopWidth: 1, borderColor: colors.border,
+  },
+  modalGrip: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, alignSelf: "center", marginBottom: 16 },
+  modalTitle: { fontFamily: "BarlowCondensed-Bold", fontSize: 22, color: colors.text, marginBottom: 4 },
+  modalSub: { fontFamily: "DMSans-Regular", color: colors.textSecondary, fontSize: 13, marginBottom: 12 },
+  modalInput: {
+    backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
+    padding: 12, minHeight: 90, textAlignVertical: "top", color: colors.text, fontFamily: "DMSans-Regular", fontSize: 14,
+  },
 });

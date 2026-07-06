@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 import bcrypt
+import httpx
 from jose import jwt, JWTError
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -28,6 +29,18 @@ DB_NAME = os.environ["DB_NAME"]
 JWT_SECRET = os.environ.get("JWT_SECRET", "pitchfinder-dev-secret-change-me-in-prod-2026")
 JWT_ALGO = "HS256"
 JWT_EXPIRE_HOURS = 24 * 30  # 30 days
+
+# Emergent Push relay
+PUSH_BASE_URL = "https://integrations.emergentagent.com"
+PUSH_KEY = os.environ.get("EMERGENT_PUSH_KEY", "placeholder")
+_push_client = httpx.AsyncClient(
+    base_url=PUSH_BASE_URL,
+    headers={"X-Push-Key": PUSH_KEY},
+    timeout=10.0,
+)
+
+# Emergent Google Auth
+EMERGENT_AUTH_BASE = "https://demobackend.emergentagent.com"
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -184,6 +197,32 @@ async def current_user(
     return user
 
 
+# ============= PUSH HELPERS =============
+async def send_push(
+    recipients: List[str],
+    data: dict,
+    idempotency_key: Optional[str] = None,
+) -> None:
+    """Fire-and-forget push notification via Emergent relay.
+
+    Non-blocking: exceptions are swallowed and logged so business ops never fail
+    because of push. Called from event handlers with try/except wrapper too.
+    """
+    if not recipients:
+        return
+    if "title" not in data or "message" not in data:
+        return
+    payload: dict = {"recipients": recipients[:100], "data": data}
+    if idempotency_key:
+        payload["$idempotency_key"] = idempotency_key
+    try:
+        resp = await _push_client.post("/api/v1/push/trigger", json=payload)
+        if resp.status_code >= 400:
+            logger.warning("push trigger %s: %s", resp.status_code, resp.text[:200])
+    except Exception as e:
+        logger.warning("push send failed: %s", e)
+
+
 def user_to_public(u: dict) -> dict:
     return {
         "id": u["id"],
@@ -257,6 +296,102 @@ async def me(user: dict = Depends(current_user)):
     return user_to_public(user)
 
 
+class GoogleSessionBody(BaseModel):
+    session_id: str
+
+
+@api.post("/auth/google")
+async def google_session(body: GoogleSessionBody):
+    """Exchange an Emergent session_id for a PitchFinder JWT.
+
+    Upserts the user by email so repeated Google logins map to the same account.
+    """
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            resp = await client.get(
+                f"{EMERGENT_AUTH_BASE}/auth/v1/env/oauth/session-data",
+                headers={"X-Session-ID": body.session_id},
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Auth provider unreachable: {e}")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=401, detail="Invalid Google session")
+    data = resp.json()
+    email = (data.get("email") or "").lower()
+    name = data.get("name") or email.split("@")[0]
+    picture = data.get("picture")
+    if not email:
+        raise HTTPException(status_code=400, detail="Google account has no email")
+
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        # Update picture if we don't have one yet
+        if picture and not existing.get("photo"):
+            await db.users.update_one({"id": existing["id"]}, {"$set": {"photo": picture}})
+        user_id = existing["id"]
+    else:
+        user_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+        doc = {
+            "id": user_id,
+            "email": email,
+            "password_hash": "",  # Google-only user
+            "name": name,
+            "photo": picture,
+            "age": None,
+            "position": None,
+            "level": "intermediate",
+            "foot": None,
+            "city": None,
+            "radius_km": 10,
+            "bio": None,
+            "availabilities": [],
+            "matches_played": 0,
+            "goals": 0,
+            "assists": 0,
+            "reputation": 100,
+            "badges": ["newcomer"],
+            "verified": True,  # Google-verified
+            "created_at": now,
+            "auth_provider": "google",
+        }
+        await db.users.insert_one(doc)
+
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    token = make_token(user_id)
+    return {"token": token, "user": user_to_public(user)}
+
+
+# ============= PUSH REGISTER =============
+class RegisterPushBody(BaseModel):
+    platform: str
+    device_token: str
+
+
+@api.post("/register-push", status_code=201)
+async def register_push(body: RegisterPushBody, user: dict = Depends(current_user)):
+    """Register a device token with Emergent push provider for the current user."""
+    try:
+        resp = await _push_client.post(
+            "/api/v1/push/users/register",
+            json={
+                "user_id": user["id"],
+                "platform": body.platform,
+                "device_token": body.device_token,
+            },
+        )
+        if resp.status_code == 401:
+            raise HTTPException(500, "EMERGENT_PUSH_KEY missing or invalid")
+        if resp.status_code >= 500:
+            raise HTTPException(502, "Push provider unavailable")
+        resp.raise_for_status()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("register_push failed: %s", e)
+    return {"status": "registered"}
+
+
 # ============= USER ROUTES =============
 @api.patch("/users/me")
 async def update_me(body: UserUpdate, user: dict = Depends(current_user)):
@@ -285,7 +420,19 @@ async def group_to_public(g: dict, user_id: str) -> dict:
     )
     is_member = await db.group_members.find_one(
         {"group_id": g["id"], "user_id": user_id}
-    ) is not None
+    )
+    is_admin = is_member and is_member.get("role") == "admin"
+    join_status = "none"
+    if is_admin:
+        join_status = "admin"
+    elif is_member:
+        join_status = "member"
+    else:
+        pending = await db.join_requests.find_one(
+            {"group_id": g["id"], "user_id": user_id, "status": "pending"}
+        )
+        if pending:
+            join_status = "pending"
     return {
         "id": g["id"],
         "name": g["name"],
@@ -300,7 +447,9 @@ async def group_to_public(g: dict, user_id: str) -> dict:
         "next_match": next_match,
         "spots_left": max(0, g["max_members"] - members_count),
         "created_at": g["created_at"],
-        "is_member": is_member,
+        "is_member": bool(is_member),
+        "is_admin": bool(is_admin),
+        "join_status": join_status,
     }
 
 
@@ -383,28 +532,122 @@ async def group_members(group_id: str, user: dict = Depends(current_user)):
 
 
 @api.post("/groups/{group_id}/join")
-async def join_group(
+async def request_join_group(
     group_id: str, body: JoinRequestCreate, user: dict = Depends(current_user)
 ):
+    """Create a pending join request. Admin must approve to actually add member."""
     g = await db.groups.find_one({"id": group_id})
     if not g:
         raise HTTPException(status_code=404, detail="Group not found")
-    existing = await db.group_members.find_one(
+    existing_member = await db.group_members.find_one(
         {"group_id": group_id, "user_id": user["id"]}
     )
-    if existing:
+    if existing_member:
         raise HTTPException(status_code=400, detail="Already a member")
-    now = datetime.now(timezone.utc).isoformat()
-    # For MVP: instant join (no admin approval)
-    await db.group_members.insert_one(
-        {
-            "group_id": group_id,
-            "user_id": user["id"],
-            "role": "member",
-            "joined_at": now,
-        }
+    existing_pending = await db.join_requests.find_one(
+        {"group_id": group_id, "user_id": user["id"], "status": "pending"}
     )
-    return {"status": "joined"}
+    if existing_pending:
+        raise HTTPException(status_code=400, detail="Request already pending")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "group_id": group_id,
+        "user_id": user["id"],
+        "user_name": user["name"],
+        "user_photo": user.get("photo"),
+        "message": body.message,
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.join_requests.insert_one(doc)
+    # Notify admin
+    try:
+        await send_push(
+            recipients=[g["admin_id"]],
+            data={
+                "title": "Nouvelle demande d'adhésion",
+                "message": f"{user['name']} veut rejoindre {g['name']}",
+                "action_url": f"/group/{group_id}",
+            },
+        )
+    except Exception as e:
+        logger.warning("push failed: %s", e)
+    doc.pop("_id", None)
+    return {"status": "pending", "request_id": doc["id"]}
+
+
+@api.get("/groups/{group_id}/join-requests")
+async def list_join_requests(group_id: str, user: dict = Depends(current_user)):
+    """Admin-only: list pending requests for a group."""
+    g = await db.groups.find_one({"id": group_id})
+    if not g:
+        raise HTTPException(status_code=404, detail="Group not found")
+    if g["admin_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Admin only")
+    reqs = await db.join_requests.find(
+        {"group_id": group_id, "status": "pending"}, {"_id": 0}
+    ).sort("created_at", 1).to_list(200)
+    return reqs
+
+
+@api.post("/groups/{group_id}/join-requests/{req_id}/approve")
+async def approve_join_request(
+    group_id: str, req_id: str, user: dict = Depends(current_user)
+):
+    g = await db.groups.find_one({"id": group_id})
+    if not g or g["admin_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Admin only")
+    req = await db.join_requests.find_one({"id": req_id, "group_id": group_id})
+    if not req or req["status"] != "pending":
+        raise HTTPException(status_code=404, detail="Request not found")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.group_members.insert_one(
+        {"group_id": group_id, "user_id": req["user_id"], "role": "member", "joined_at": now}
+    )
+    await db.join_requests.update_one(
+        {"id": req_id}, {"$set": {"status": "approved", "resolved_at": now}}
+    )
+    # Notify the applicant
+    try:
+        await send_push(
+            recipients=[req["user_id"]],
+            data={
+                "title": f"Bienvenue dans {g['name']} !",
+                "message": "Ta demande d'adhésion a été acceptée. À toi de jouer 🔥",
+                "action_url": f"/chat/{group_id}",
+            },
+        )
+    except Exception as e:
+        logger.warning("push failed: %s", e)
+    return {"status": "approved"}
+
+
+@api.post("/groups/{group_id}/join-requests/{req_id}/reject")
+async def reject_join_request(
+    group_id: str, req_id: str, user: dict = Depends(current_user)
+):
+    g = await db.groups.find_one({"id": group_id})
+    if not g or g["admin_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Admin only")
+    now = datetime.now(timezone.utc).isoformat()
+    result = await db.join_requests.update_one(
+        {"id": req_id, "group_id": group_id, "status": "pending"},
+        {"$set": {"status": "rejected", "resolved_at": now}},
+    )
+    if result.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Request not found")
+    return {"status": "rejected"}
+
+
+@api.post("/groups/{group_id}/join-requests/cancel")
+async def cancel_my_join_request(group_id: str, user: dict = Depends(current_user)):
+    """User can cancel their own pending request."""
+    now = datetime.now(timezone.utc).isoformat()
+    await db.join_requests.update_many(
+        {"group_id": group_id, "user_id": user["id"], "status": "pending"},
+        {"$set": {"status": "cancelled", "resolved_at": now}},
+    )
+    return {"status": "cancelled"}
 
 
 @api.post("/groups/{group_id}/leave")
@@ -455,14 +698,69 @@ async def send_message(
     }
     await db.messages.insert_one(doc)
     doc.pop("_id", None)
+    # Notify other members
+    try:
+        members = await db.group_members.find(
+            {"group_id": group_id, "user_id": {"$ne": user["id"]}}, {"_id": 0, "user_id": 1}
+        ).to_list(200)
+        group = await db.groups.find_one({"id": group_id}, {"_id": 0, "name": 1})
+        preview = body.text[:80] + ("…" if len(body.text) > 80 else "")
+        await send_push(
+            recipients=[m["user_id"] for m in members],
+            data={
+                "title": f"{user['name']} · {group['name'] if group else 'PitchFinder'}",
+                "message": preview,
+                "action_url": f"/chat/{group_id}",
+            },
+        )
+    except Exception as e:
+        logger.warning("push failed: %s", e)
     return doc
 
 
 # ============= MATCHES =============
+async def match_to_public(m: dict) -> dict:
+    """Enrich match with member details for RSVP/team views."""
+    uids = list(set(
+        m.get("players", [])
+        + m.get("teams", {}).get("a", [])
+        + m.get("teams", {}).get("b", [])
+        + m.get("teams", {}).get("bench", [])
+        + list(m.get("rsvps", {}).keys())
+    ))
+    users_map: dict = {}
+    if uids:
+        users = await db.users.find(
+            {"id": {"$in": uids}}, {"_id": 0, "id": 1, "name": 1, "photo": 1, "position": 1}
+        ).to_list(200)
+        users_map = {u["id"]: u for u in users}
+    return {
+        "id": m["id"],
+        "group_id": m["group_id"],
+        "title": m["title"],
+        "location": m["location"],
+        "date": m["date"],
+        "max_players": m["max_players"],
+        "players": m.get("players", []),
+        "created_by": m.get("created_by"),
+        "rsvps": m.get("rsvps", {}),
+        "teams": m.get("teams", {"a": [], "b": [], "bench": []}),
+        "users": users_map,
+    }
+
+
 @api.get("/groups/{group_id}/matches")
 async def list_matches(group_id: str, user: dict = Depends(current_user)):
     matches = await db.matches.find({"group_id": group_id}, {"_id": 0}).sort("date", 1).to_list(200)
     return matches
+
+
+@api.get("/matches/{match_id}")
+async def get_match(match_id: str, user: dict = Depends(current_user)):
+    m = await db.matches.find_one({"id": match_id}, {"_id": 0})
+    if not m:
+        raise HTTPException(status_code=404, detail="Match not found")
+    return await match_to_public(m)
 
 
 @api.post("/matches")
@@ -480,11 +778,88 @@ async def create_match(body: MatchCreate, user: dict = Depends(current_user)):
         "date": body.date,
         "max_players": body.max_players,
         "players": [user["id"]],
+        "rsvps": {user["id"]: "going"},
+        "teams": {"a": [], "b": [], "bench": []},
         "created_by": user["id"],
     }
     await db.matches.insert_one(doc)
     doc.pop("_id", None)
+    # Notify group members
+    try:
+        members = await db.group_members.find(
+            {"group_id": body.group_id, "user_id": {"$ne": user["id"]}}, {"_id": 0, "user_id": 1}
+        ).to_list(200)
+        await send_push(
+            recipients=[m["user_id"] for m in members],
+            data={
+                "title": "Nouveau match programmé",
+                "message": f"{body.title} · {body.location}",
+                "action_url": f"/match/{doc['id']}",
+            },
+        )
+    except Exception as e:
+        logger.warning("push failed: %s", e)
     return doc
+
+
+class RsvpBody(BaseModel):
+    status: str  # going | maybe | decline
+
+
+@api.post("/matches/{match_id}/rsvp")
+async def rsvp_match(match_id: str, body: RsvpBody, user: dict = Depends(current_user)):
+    if body.status not in ("going", "maybe", "decline"):
+        raise HTTPException(status_code=400, detail="Invalid RSVP status")
+    m = await db.matches.find_one({"id": match_id})
+    if not m:
+        raise HTTPException(status_code=404, detail="Match not found")
+    is_member = await db.group_members.find_one(
+        {"group_id": m["group_id"], "user_id": user["id"]}
+    )
+    if not is_member:
+        raise HTTPException(status_code=403, detail="Not a group member")
+    updates: dict = {f"rsvps.{user['id']}": body.status}
+    if body.status == "going":
+        await db.matches.update_one(
+            {"id": match_id}, {"$addToSet": {"players": user["id"]}, "$set": updates}
+        )
+    else:
+        await db.matches.update_one(
+            {"id": match_id}, {"$pull": {"players": user["id"]}, "$set": updates}
+        )
+        # Also remove from teams
+        await db.matches.update_one(
+            {"id": match_id},
+            {"$pull": {"teams.a": user["id"], "teams.b": user["id"], "teams.bench": user["id"]}},
+        )
+    return {"status": body.status}
+
+
+class TeamBody(BaseModel):
+    user_id: str
+    team: str  # a | b | bench | none
+
+
+@api.post("/matches/{match_id}/team")
+async def assign_team(match_id: str, body: TeamBody, user: dict = Depends(current_user)):
+    if body.team not in ("a", "b", "bench", "none"):
+        raise HTTPException(status_code=400, detail="Invalid team")
+    m = await db.matches.find_one({"id": match_id})
+    if not m:
+        raise HTTPException(status_code=404, detail="Match not found")
+    group = await db.groups.find_one({"id": m["group_id"]})
+    if not group or group["admin_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Admin only")
+    # Remove from all teams first
+    await db.matches.update_one(
+        {"id": match_id},
+        {"$pull": {"teams.a": body.user_id, "teams.b": body.user_id, "teams.bench": body.user_id}},
+    )
+    if body.team != "none":
+        await db.matches.update_one(
+            {"id": match_id}, {"$addToSet": {f"teams.{body.team}": body.user_id}}
+        )
+    return {"status": "ok"}
 
 
 @api.post("/matches/{match_id}/join")
@@ -496,13 +871,27 @@ async def join_match(match_id: str, user: dict = Depends(current_user)):
         return {"status": "already joined"}
     if len(m.get("players", [])) >= m["max_players"]:
         raise HTTPException(status_code=400, detail="Match full")
-    await db.matches.update_one({"id": match_id}, {"$push": {"players": user["id"]}})
+    await db.matches.update_one(
+        {"id": match_id},
+        {"$push": {"players": user["id"]}, "$set": {f"rsvps.{user['id']}": "going"}},
+    )
     return {"status": "joined"}
 
 
 @api.post("/matches/{match_id}/leave")
 async def leave_match(match_id: str, user: dict = Depends(current_user)):
-    await db.matches.update_one({"id": match_id}, {"$pull": {"players": user["id"]}})
+    await db.matches.update_one(
+        {"id": match_id},
+        {
+            "$pull": {
+                "players": user["id"],
+                "teams.a": user["id"],
+                "teams.b": user["id"],
+                "teams.bench": user["id"],
+            },
+            "$set": {f"rsvps.{user['id']}": "decline"},
+        },
+    )
     return {"status": "left"}
 
 
