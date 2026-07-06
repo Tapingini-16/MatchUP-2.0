@@ -256,7 +256,7 @@ export default function GroupDetail() {
                   <View style={styles.metaChips}>
                     {group.positions_needed.map((p: string) => (
                       <View key={p} style={styles.posChip}>
-                        <Ionicons name="search" size={11} color={colors.primary} />
+                        <Ionicons name="person-add" size={11} color={colors.primary} />
                         <Text style={styles.posChipText}>{p}</Text>
                       </View>
                     ))}
