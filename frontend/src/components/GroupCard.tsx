@@ -34,7 +34,9 @@ export function GroupCard({ group, onPress }: { group: Group; onPress: () => voi
         {group.photo ? (
           <Image source={{ uri: group.photo }} style={styles.image} contentFit="cover" transition={200} />
         ) : (
-          <View style={[styles.image, { backgroundColor: colors.surfaceHigh }]} />
+          <View style={[styles.image, styles.imageFallback]}>
+            <Ionicons name="football" size={64} color={colors.borderStrong} />
+          </View>
         )}
         <LinearGradient
           colors={["rgba(9,10,12,0)", "rgba(9,10,12,0.75)", "rgba(9,10,12,0.95)"]}
@@ -106,6 +108,11 @@ const styles = StyleSheet.create({
   },
   imageWrap: { height: 200, position: "relative" },
   image: { width: "100%", height: "100%" },
+  imageFallback: {
+    backgroundColor: colors.surfaceHigh,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   distancePill: {
     position: "absolute",
     top: spacing.md,

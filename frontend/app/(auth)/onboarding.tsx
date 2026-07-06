@@ -92,7 +92,7 @@ export default function Onboarding() {
         )}
       />
 
-      <View style={styles.pinned} pointerEvents="box-none">
+      <View style={[styles.pinned, { pointerEvents: "box-none" }]}>
         <View style={styles.dotsRow}>
           {SLIDES.map((s, i) => (
             <View
