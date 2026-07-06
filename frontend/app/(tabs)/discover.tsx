@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Screen, EmptyState } from "@/src/components/Screen";
 import { GroupCard } from "@/src/components/GroupCard";
 import { ChipRow, ChipItem } from "@/src/components/ChipRow";
+import { AdvancedFiltersSheet, AdvancedFilters } from "@/src/components/AdvancedFilters";
 import { api } from "@/src/api/client";
 import { colors, spacing, radius, type as t } from "@/src/theme";
 
@@ -31,37 +32,68 @@ const SORT_CHIPS: ChipItem[] = [
   { key: "recent", label: "Récent" },
 ];
 
+const DEFAULT_FILTERS: AdvancedFilters = { radius_km: 30, day: null, position: null };
+
 export default function Discover() {
   const router = useRouter();
   const [q, setQ] = useState("");
   const [level, setLevel] = useState("all");
   const [sort, setSort] = useState("distance");
+  const [advanced, setAdvanced] = useState<AdvancedFilters>(DEFAULT_FILTERS);
+  const [showFilters, setShowFilters] = useState(false);
   const [groups, setGroups] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.listGroups({ q: q || undefined, level, sort });
+      const data = await api.listGroups({
+        q: q || undefined,
+        level,
+        sort,
+        radius_km: advanced.radius_km < 30 ? advanced.radius_km : undefined,
+        day: advanced.day || undefined,
+        position: advanced.position || undefined,
+      });
       setGroups(data);
     } catch (e) {
       console.log("Discover load error", e);
     } finally {
       setLoading(false);
     }
-  }, [q, level, sort]);
+  }, [q, level, sort, advanced]);
 
   useEffect(() => {
     const t = setTimeout(load, 250);
     return () => clearTimeout(t);
   }, [load]);
 
+  const activeCount =
+    (advanced.radius_km < 30 ? 1 : 0) + (advanced.day ? 1 : 0) + (advanced.position ? 1 : 0);
+
   return (
     <Screen edges={["top"]} testID="discover-screen">
       {/* Sticky header */}
       <View style={styles.header}>
-        <Text style={styles.headline}>Explorer</Text>
-        <Text style={styles.sub}>Trouve le groupe qui te correspond</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headline}>Explorer</Text>
+            <Text style={styles.sub}>Trouve le groupe qui te correspond</Text>
+          </View>
+          <Pressable
+            onPress={() => setShowFilters(true)}
+            style={styles.filterBtn}
+            testID="open-filters-button"
+            hitSlop={8}
+          >
+            <Ionicons name="options" size={20} color={activeCount > 0 ? colors.primary : colors.text} />
+            {activeCount > 0 && (
+              <View style={styles.filterBadge}>
+                <Text style={styles.filterBadgeText}>{activeCount}</Text>
+              </View>
+            )}
+          </Pressable>
+        </View>
 
         <View style={styles.searchBox}>
           <Ionicons name="search" size={18} color={colors.textSecondary} />
@@ -113,6 +145,30 @@ export default function Discover() {
         </View>
       </View>
 
+      {/* Active filters row */}
+      {activeCount > 0 && (
+        <View style={styles.activeRow}>
+          {advanced.radius_km < 30 && (
+            <ActiveFilterPill
+              label={`≤ ${advanced.radius_km} km`}
+              onClear={() => setAdvanced({ ...advanced, radius_km: 30 })}
+            />
+          )}
+          {advanced.day && (
+            <ActiveFilterPill
+              label={dayLabel(advanced.day)}
+              onClear={() => setAdvanced({ ...advanced, day: null })}
+            />
+          )}
+          {advanced.position && (
+            <ActiveFilterPill
+              label={`Poste : ${advanced.position}`}
+              onClear={() => setAdvanced({ ...advanced, position: null })}
+            />
+          )}
+        </View>
+      )}
+
       <FlatList
         data={groups}
         keyExtractor={(item) => item.id}
@@ -134,14 +190,69 @@ export default function Discover() {
           )
         }
       />
+
+      <AdvancedFiltersSheet
+        visible={showFilters}
+        value={advanced}
+        onChange={setAdvanced}
+        onClose={() => setShowFilters(false)}
+        onReset={() => setAdvanced(DEFAULT_FILTERS)}
+      />
     </Screen>
   );
+}
+
+function ActiveFilterPill({ label, onClear }: { label: string; onClear: () => void }) {
+  return (
+    <Pressable onPress={onClear} style={styles.activePill} testID={`active-${label}`}>
+      <Text style={styles.activeText}>{label}</Text>
+      <Ionicons name="close" size={14} color={colors.primary} />
+    </Pressable>
+  );
+}
+
+function dayLabel(k: string) {
+  const map: Record<string, string> = {
+    mon: "Lundi",
+    tue: "Mardi",
+    wed: "Mercredi",
+    thu: "Jeudi",
+    fri: "Vendredi",
+    sat: "Samedi",
+    sun: "Dimanche",
+  };
+  return map[k] ?? k;
 }
 
 const styles = StyleSheet.create({
   header: { paddingHorizontal: spacing.base, paddingTop: spacing.sm, paddingBottom: 8 },
   headline: { ...t.h1, color: colors.text },
   sub: { fontFamily: "DMSans-Regular", color: colors.textSecondary, fontSize: 14, marginTop: 2, marginBottom: spacing.md },
+  filterBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  filterBadge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 5,
+    borderRadius: 9,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: colors.bg,
+  },
+  filterBadgeText: { color: colors.textOnPrimary, fontFamily: "DMSans-Bold", fontSize: 10 },
   searchBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -177,5 +288,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  activeRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    paddingHorizontal: spacing.base,
+    paddingBottom: spacing.md,
+  },
+  activePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingLeft: 12,
+    paddingRight: 8,
+    height: 28,
+    borderRadius: radius.pill,
+    backgroundColor: colors.primaryMuted,
+    borderWidth: 1,
+    borderColor: colors.primaryDim,
+  },
+  activeText: { fontFamily: "DMSans-Bold", color: colors.primary, fontSize: 11 },
   loader: { padding: spacing.xxl, alignItems: "center" },
 });

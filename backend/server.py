@@ -104,6 +104,31 @@ class GroupCreate(BaseModel):
     city: str
     level: str  # rookie, intermediate, advanced, elite, mixed
     max_members: int = 20
+    preferred_days: List[str] = []  # mon, tue, wed, thu, fri, sat, sun
+    positions_needed: List[str] = []  # GK, DEF, MID, FWD
+
+
+class GroupUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    photo: Optional[str] = None
+    city: Optional[str] = None
+    level: Optional[str] = None
+    max_members: Optional[int] = None
+    preferred_days: Optional[List[str]] = None
+    positions_needed: Optional[List[str]] = None
+
+
+class ReportCreate(BaseModel):
+    target_type: str  # user | group
+    target_id: str
+    reason: str  # spam, harassment, inappropriate, fake, other
+    message: Optional[str] = None
+
+
+class BlockToggle(BaseModel):
+    target_type: str  # user | group
+    target_id: str
 
 
 class GroupPublic(BaseModel):
@@ -459,7 +484,17 @@ async def group_to_public(g: dict, user_id: str) -> dict:
         "is_member": bool(is_member),
         "is_admin": bool(is_admin),
         "join_status": join_status,
+        "preferred_days": g.get("preferred_days", []),
+        "positions_needed": g.get("positions_needed", []),
     }
+
+
+async def blocked_ids(user_id: str) -> tuple[set, set]:
+    """Return (blocked_user_ids, blocked_group_ids) for a user."""
+    blocks = await db.blocks.find({"user_id": user_id}, {"_id": 0}).to_list(500)
+    u = {b["target_id"] for b in blocks if b["target_type"] == "user"}
+    g = {b["target_id"] for b in blocks if b["target_type"] == "group"}
+    return u, g
 
 
 @api.get("/groups")
@@ -467,6 +502,9 @@ async def list_groups(
     q: Optional[str] = None,
     level: Optional[str] = None,
     city: Optional[str] = None,
+    radius_km: Optional[float] = None,
+    day: Optional[str] = None,
+    position: Optional[str] = None,
     sort: Optional[str] = "distance",
     user: dict = Depends(current_user),
 ):
@@ -481,9 +519,20 @@ async def list_groups(
         query["level"] = level
     if city:
         query["city"] = {"$regex": city, "$options": "i"}
+    if day:
+        query["preferred_days"] = day
+    if position and position != "any":
+        query["positions_needed"] = position
+
+    _, blocked_groups = await blocked_ids(user["id"])
+    if blocked_groups:
+        query["id"] = {"$nin": list(blocked_groups)}
 
     groups = await db.groups.find(query, {"_id": 0}).to_list(200)
     result = [await group_to_public(g, user["id"]) for g in groups]
+
+    if radius_km is not None:
+        result = [r for r in result if r["distance_km"] <= radius_km]
 
     if sort == "distance":
         result.sort(key=lambda x: x["distance_km"])
@@ -506,6 +555,8 @@ async def create_group(body: GroupCreate, user: dict = Depends(current_user)):
         "city": body.city,
         "level": body.level,
         "max_members": body.max_members,
+        "preferred_days": body.preferred_days,
+        "positions_needed": body.positions_needed,
         "admin_id": user["id"],
         "created_at": now,
         "distance_km": 0.0,
@@ -515,6 +566,20 @@ async def create_group(body: GroupCreate, user: dict = Depends(current_user)):
         {"group_id": gid, "user_id": user["id"], "role": "admin", "joined_at": now}
     )
     return await group_to_public(doc, user["id"])
+
+
+@api.patch("/groups/{group_id}")
+async def update_group(
+    group_id: str, body: GroupUpdate, user: dict = Depends(current_user)
+):
+    g = await db.groups.find_one({"id": group_id})
+    if not g or g["admin_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Admin only")
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if updates:
+        await db.groups.update_one({"id": group_id}, {"$set": updates})
+    updated = await db.groups.find_one({"id": group_id}, {"_id": 0})
+    return await group_to_public(updated, user["id"])
 
 
 @api.get("/groups/{group_id}")
@@ -683,7 +748,11 @@ async def get_messages(group_id: str, user: dict = Depends(current_user)):
     )
     if not is_member:
         raise HTTPException(status_code=403, detail="Not a group member")
-    msgs = await db.messages.find({"group_id": group_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    blocked_users, _ = await blocked_ids(user["id"])
+    q: dict = {"group_id": group_id}
+    if blocked_users:
+        q["user_id"] = {"$nin": list(blocked_users)}
+    msgs = await db.messages.find(q, {"_id": 0}).sort("created_at", 1).to_list(500)
     return msgs
 
 
@@ -904,6 +973,85 @@ async def leave_match(match_id: str, user: dict = Depends(current_user)):
     return {"status": "left"}
 
 
+# ============= REPORTS & BLOCKS =============
+@api.post("/reports", status_code=201)
+async def create_report(body: ReportCreate, user: dict = Depends(current_user)):
+    if body.target_type not in ("user", "group"):
+        raise HTTPException(400, "Invalid target_type")
+    if body.reason not in ("spam", "harassment", "inappropriate", "fake", "other"):
+        raise HTTPException(400, "Invalid reason")
+    if body.target_type == "user" and body.target_id == user["id"]:
+        raise HTTPException(400, "Cannot report yourself")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "reporter_id": user["id"],
+        "target_type": body.target_type,
+        "target_id": body.target_id,
+        "reason": body.reason,
+        "message": body.message,
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.reports.insert_one(doc)
+    doc.pop("_id", None)
+    return {"status": "submitted", "id": doc["id"]}
+
+
+@api.post("/blocks", status_code=201)
+async def block(body: BlockToggle, user: dict = Depends(current_user)):
+    if body.target_type not in ("user", "group"):
+        raise HTTPException(400, "Invalid target_type")
+    if body.target_type == "user" and body.target_id == user["id"]:
+        raise HTTPException(400, "Cannot block yourself")
+    await db.blocks.update_one(
+        {"user_id": user["id"], "target_type": body.target_type, "target_id": body.target_id},
+        {"$set": {
+            "user_id": user["id"],
+            "target_type": body.target_type,
+            "target_id": body.target_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
+    return {"status": "blocked"}
+
+
+@api.delete("/blocks/{target_type}/{target_id}")
+async def unblock(target_type: str, target_id: str, user: dict = Depends(current_user)):
+    if target_type not in ("user", "group"):
+        raise HTTPException(400, "Invalid target_type")
+    await db.blocks.delete_one(
+        {"user_id": user["id"], "target_type": target_type, "target_id": target_id}
+    )
+    return {"status": "unblocked"}
+
+
+@api.get("/blocks")
+async def list_blocks(user: dict = Depends(current_user)):
+    blocks = await db.blocks.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    user_ids = [b["target_id"] for b in blocks if b["target_type"] == "user"]
+    group_ids = [b["target_id"] for b in blocks if b["target_type"] == "group"]
+    users_map = {}
+    groups_map = {}
+    if user_ids:
+        users = await db.users.find(
+            {"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "name": 1, "photo": 1}
+        ).to_list(500)
+        users_map = {u["id"]: u for u in users}
+    if group_ids:
+        groups = await db.groups.find(
+            {"id": {"$in": group_ids}}, {"_id": 0, "id": 1, "name": 1, "photo": 1, "city": 1}
+        ).to_list(500)
+        groups_map = {g["id"]: g for g in groups}
+    return [
+        {
+            **b,
+            "target": users_map.get(b["target_id"]) if b["target_type"] == "user" else groups_map.get(b["target_id"]),
+        }
+        for b in blocks
+    ]
+
+
 # ============= SEED =============
 @api.post("/seed")
 async def seed_data():
@@ -1023,6 +1171,8 @@ async def seed_data():
             "level": "intermediate",
             "max_members": 20,
             "distance_km": 1.2,
+            "preferred_days": ["tue", "thu"],
+            "positions_needed": ["FWD", "MID"],
         },
         {
             "name": "FC République",
@@ -1032,6 +1182,8 @@ async def seed_data():
             "level": "advanced",
             "max_members": 18,
             "distance_km": 2.4,
+            "preferred_days": ["sun"],
+            "positions_needed": ["GK", "DEF"],
         },
         {
             "name": "Bastille United",
@@ -1041,6 +1193,8 @@ async def seed_data():
             "level": "advanced",
             "max_members": 16,
             "distance_km": 3.1,
+            "preferred_days": ["sat"],
+            "positions_needed": ["MID"],
         },
         {
             "name": "Les Débutants du Sud",
@@ -1050,6 +1204,8 @@ async def seed_data():
             "level": "rookie",
             "max_members": 25,
             "distance_km": 5.8,
+            "preferred_days": ["wed", "sat", "sun"],
+            "positions_needed": ["GK", "DEF", "MID", "FWD"],
         },
         {
             "name": "Elite Paris FC",
@@ -1059,6 +1215,8 @@ async def seed_data():
             "level": "elite",
             "max_members": 22,
             "distance_km": 7.2,
+            "preferred_days": ["sat", "sun"],
+            "positions_needed": ["GK"],
         },
         {
             "name": "Mixed Vibes",
@@ -1068,6 +1226,8 @@ async def seed_data():
             "level": "mixed",
             "max_members": 20,
             "distance_km": 4.5,
+            "preferred_days": ["mon", "wed", "fri"],
+            "positions_needed": ["MID", "FWD"],
         },
         {
             "name": "Cité Universitaire FC",
@@ -1077,6 +1237,8 @@ async def seed_data():
             "level": "intermediate",
             "max_members": 24,
             "distance_km": 6.1,
+            "preferred_days": ["wed", "sun"],
+            "positions_needed": ["DEF", "MID"],
         },
         {
             "name": "Old School Kickers",
@@ -1086,6 +1248,8 @@ async def seed_data():
             "level": "intermediate",
             "max_members": 18,
             "distance_km": 8.9,
+            "preferred_days": ["sun"],
+            "positions_needed": ["FWD"],
         },
     ]
 

@@ -1,0 +1,62 @@
+{
+  "summary": "PitchFinder V3 iteration 3 testing — advanced filters + report/block moderation. Backend: 15/15 pytest cases pass in /app/backend/tests/test_v3_features.py (advanced filters day/position/radius, seeded groups have preferred_days+positions_needed, PATCH /api/groups admin-only vs 403, POST /api/reports for group+user with validation of reason/target_type/self, POST /api/blocks with idempotency + list with populated target + hides from /api/groups feed, DELETE /api/blocks, GET /api/blocks + messages filter by blocked user). Frontend Playwright on 390x844: sign-in with demo works, Discover shows 12 groups, tapping open-filters-button opens advanced-filters-sheet, selecting filter-day-sun + filter-position-GK + filters-apply-button closes sheet, filter button badge shows '2', active pills 'Dimanche' and 'Poste : GK' render (testID active-Dimanche, active-Poste : GK), tapping × on pill removes filter and refreshes list, group detail shows 'Postes recherchés' + 'Jours de match' sections for seeded groups, group-menu-button opens group-menu with share+report (block hidden for admin — verified on FC République where demo is admin), menu-report opens report-modal, report-reason-spam + report-submit-button submits and dismisses modal. Two backend regressions from V2: /api/register-push graceful-degrade status is not verified here (still open from iter2). Sunday+GK filter returned 5 groups (matches actual DB — 3 seeded + 2 leftover TEST_V3_Patch groups from test suite runs).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/groups (radius_km filter)",
+        "issue": "radius_km filter is applied AFTER Mongo query, so returns fewer groups than the paginated 200-doc cap suggests. Non-blocking with current dataset (12 groups) but if collection grows past 200, pagination will silently drop matches. Consider filtering in Mongo query using precomputed distance bucket."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "group/[id].tsx — positions_needed pill",
+        "issue": "Position pills use Ionicons 'search' icon (magnifying glass) next to the position code (GK/DEF/MID/FWD). A soccer/person icon (e.g. 'football' or 'person') would be more semantic. Reference: /app/frontend/app/group/[id].tsx:259",
+        "testID": "n/a",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "AdvancedFiltersSheet",
+        "issues": [
+          "Sheet content extends slightly below the visible 844px viewport on mobile — Playwright had to scroll_into_view for filter-day-sun, filter-position-GK, filters-apply-button and filters-reset. Real users on smaller phones (e.g. 375x667) may need to scroll to reach 'Appliquer les filtres'. Consider capping the ScrollView height or making the CTA sticky."
+        ]
+      }
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v3_features.py",
+    "/app/backend/tests/test_v2_features.py",
+    "/app/test_reports/pytest/v3_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: switch position pill Icon from 'search' to a more semantic one (person/football) in /app/frontend/app/group/[id].tsx:259.",
+    "OPTIONAL: pin 'Appliquer les filtres' as a sticky footer inside AdvancedFiltersSheet so it stays visible on small phones (avoid scrolling to reach CTA).",
+    "STILL OPEN FROM V2: /api/register-push graceful-degrade when EMERGENT_PUSH_KEY=placeholder (see iteration_2.json).",
+    "NICE-TO-HAVE: filter radius_km in Mongo query, not post-fetch (see backend minor)."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew to 1352 lines — split into routers/ (auth, groups, matches, moderation, push) is overdue.",
+    "blocks upsert is safe idempotently, but no index on (user_id, target_type, target_id) — add a unique compound index for defense-in-depth against races.",
+    "reports collection has no compound (reporter_id,target_id,created_at) index — moderator dashboard would suffer as data grows.",
+    "GET /api/groups now scans ALL groups then post-filters radius + sorts in Python — will not scale beyond a few hundred groups without pagination + geospatial index.",
+    "AdvancedFilters.tsx accepts radius_km=30 as 'unlimited' sentinel — consider explicit null instead to avoid off-by-one edge cases when a real 30km user filter is desired.",
+    "Group menu 'menu-block' hidden for admin is correct, but an admin can still be reported by themselves via API (self-report guard exists for users but the admin's own group could be reported by them). Consider adding a self-group-report guard too."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v3_features.py (created)",
+    "/app/test_reports/pytest/v3_results.xml (generated)",
+    "/app/test_reports/iteration_3.json (this report)"
+  ],
+  "success_rate": {"backend": "100% (15/15) on V3 suite", "frontend": "100% of tested V3 flows (filters + report + group detail + menu)"},
+  "seed_data_creation": "Pytest run created TEST_V3_* groups (Patched Name, TEST V3 PatchDeny f771e5, TEST V3 Patch, TEST V3 Group) that remain in DB. Reports collection has TEST v3 report entries. These accumulate across iterations; consider a dev-only cleanup endpoint. Sunday+GK filter counts 5 groups now (3 real seeded + 2 test-produced 'Patched Name' groups) instead of the spec-expected 3.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "V3 test file: /app/backend/tests/test_v3_features.py — reuse. Seed group names are: FC République, Les Titans du 11ème, Bastille United, Les Débutants du Sud, Elite Paris FC, Mixed Vibes, Cité Universitaire FC, Old School Kickers. All 4 demo accounts are members of most seeded groups AND Alex/demo is admin of FC République (not just Les Titans) — so menu-block is hidden for demo on FC République. Use Sarah/leo/tom for member-not-admin block flow. Playwright caveats: (1) modal chips inside AdvancedFiltersSheet require scroll_into_view_if_needed before click; (2) items inside group-menu bottom sheet (menu-report/menu-block) are reported 'outside viewport' by Playwright — use page.evaluate(\"document.querySelector('[data-testid=...]').click()\") as workaround. (3) Long-press for chat report cannot be reliably simulated on web preview; verify via direct /api/reports POST. Filter behavior: activeCount badge and active-{Label} pill testIDs are computed from LABEL text ('Dimanche', 'Poste : GK', '≤ N km'), not day/position keys. Report modal auto-dismisses after ~1200ms success view. Blocked screen /blocked route requires auth — accessible via Settings.",
+  "rca_of_issue": "N/A — no critical bugs found in V3 features. All 15 backend endpoints & 6 frontend flows tested behave per spec. Two carry-over concerns: /api/register-push 500 (from V2 iter2, still not verified in this iter) and the two design nits above."
+}

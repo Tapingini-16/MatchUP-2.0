@@ -24,6 +24,23 @@ const LEVELS = [
   { key: "mixed", label: "Tous niveaux" },
 ];
 
+const DAYS = [
+  { key: "mon", label: "Lun" },
+  { key: "tue", label: "Mar" },
+  { key: "wed", label: "Mer" },
+  { key: "thu", label: "Jeu" },
+  { key: "fri", label: "Ven" },
+  { key: "sat", label: "Sam" },
+  { key: "sun", label: "Dim" },
+];
+
+const POSITIONS = [
+  { key: "GK", label: "Gardien" },
+  { key: "DEF", label: "Défenseur" },
+  { key: "MID", label: "Milieu" },
+  { key: "FWD", label: "Attaquant" },
+];
+
 const COVERS = [
   "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=800",
   "https://images.unsplash.com/photo-1517927033932-b3d18e61fb3a?w=800",
@@ -41,6 +58,8 @@ export default function CreateGroup() {
   const [level, setLevel] = useState("intermediate");
   const [maxMembers, setMaxMembers] = useState("20");
   const [photo, setPhoto] = useState(COVERS[0]);
+  const [preferredDays, setPreferredDays] = useState<string[]>([]);
+  const [positionsNeeded, setPositionsNeeded] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,6 +77,8 @@ export default function CreateGroup() {
         level,
         max_members: parseInt(maxMembers, 10) || 20,
         photo,
+        preferred_days: preferredDays,
+        positions_needed: positionsNeeded,
       });
       router.replace(`/group/${g.id}`);
     } catch (e: any) {
@@ -179,6 +200,61 @@ export default function CreateGroup() {
             keyboardType="number-pad"
             maxLength={2}
           />
+
+          <Text style={styles.label}>Jours de match (optionnel)</Text>
+          <View style={styles.pillRow}>
+            {DAYS.map((d) => {
+              const active = preferredDays.includes(d.key);
+              return (
+                <Pressable
+                  key={d.key}
+                  onPress={() =>
+                    setPreferredDays((prev) =>
+                      prev.includes(d.key) ? prev.filter((x) => x !== d.key) : [...prev, d.key],
+                    )
+                  }
+                  style={[
+                    styles.pill,
+                    active && { backgroundColor: colors.primaryMuted, borderColor: colors.primary },
+                  ]}
+                  testID={`create-day-${d.key}`}
+                >
+                  <Text style={{ color: active ? colors.primary : colors.textSecondary, fontFamily: "DMSans-Bold" }}>
+                    {d.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Text style={styles.label}>Postes recherchés (optionnel)</Text>
+          <Text style={{ fontFamily: "DMSans-Regular", color: colors.textMuted, fontSize: 12, marginTop: -2, marginBottom: 6 }}>
+            Aide les joueurs à trouver ton groupe
+          </Text>
+          <View style={styles.pillRow}>
+            {POSITIONS.map((p) => {
+              const active = positionsNeeded.includes(p.key);
+              return (
+                <Pressable
+                  key={p.key}
+                  onPress={() =>
+                    setPositionsNeeded((prev) =>
+                      prev.includes(p.key) ? prev.filter((x) => x !== p.key) : [...prev, p.key],
+                    )
+                  }
+                  style={[
+                    styles.pill,
+                    active && { backgroundColor: colors.primaryMuted, borderColor: colors.primary },
+                  ]}
+                  testID={`create-pos-${p.key}`}
+                >
+                  <Text style={{ color: active ? colors.primary : colors.textSecondary, fontFamily: "DMSans-Medium" }}>
+                    {p.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
 
           {error && (
             <View style={styles.errorBox}>

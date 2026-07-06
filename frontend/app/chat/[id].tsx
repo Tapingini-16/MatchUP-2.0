@@ -15,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import dayjs from "dayjs";
 import { Screen } from "@/src/components/Screen";
 import { Avatar } from "@/src/components/Avatar";
+import { ReportModal } from "@/src/components/ReportModal";
 import { useAuth } from "@/src/context/auth";
 import { api } from "@/src/api/client";
 import { colors, spacing, radius, type as t } from "@/src/theme";
@@ -28,6 +29,7 @@ export default function ChatScreen() {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [reportTarget, setReportTarget] = useState<{ id: string; name: string } | null>(null);
   const listRef = useRef<FlatList>(null);
 
   const load = useCallback(async () => {
@@ -102,7 +104,13 @@ export default function ChatScreen() {
               const prev = messages[index - 1];
               const showAvatar = !isMe && (!prev || prev.user_id !== item.user_id);
               return (
-                <View style={[styles.msgRow, isMe && { justifyContent: "flex-end" }]}>
+                <Pressable
+                  onLongPress={() => {
+                    if (!isMe) setReportTarget({ id: item.user_id, name: item.user_name });
+                  }}
+                  style={[styles.msgRow, isMe && { justifyContent: "flex-end" }]}
+                  testID={`msg-${item.id}`}
+                >
                   {!isMe && (
                     <View style={{ width: 32, marginRight: 8 }}>
                       {showAvatar && <Avatar uri={item.user_photo} name={item.user_name} size={32} />}
@@ -122,7 +130,7 @@ export default function ChatScreen() {
                       {dayjs(item.created_at).format("HH:mm")}
                     </Text>
                   </View>
-                </View>
+                </Pressable>
               );
             }}
           />
@@ -153,6 +161,14 @@ export default function ChatScreen() {
           </Pressable>
         </View>
       </KeyboardAvoidingView>
+
+      <ReportModal
+        visible={!!reportTarget}
+        targetType="user"
+        targetId={reportTarget?.id ?? ""}
+        targetName={reportTarget?.name}
+        onClose={() => setReportTarget(null)}
+      />
     </Screen>
   );
 }

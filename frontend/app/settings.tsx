@@ -18,6 +18,7 @@ export default function Settings() {
       items: [
         { icon: "person" as any, label: "Modifier mon profil", onPress: () => router.push("/edit-profile") },
         { icon: "shield-checkmark" as any, label: "Sécurité & mot de passe", onPress: () => {} },
+        { icon: "ban" as any, label: "Utilisateurs & groupes bloqués", onPress: () => router.push("/blocked") },
         { icon: "lock-closed" as any, label: "Confidentialité", onPress: () => {} },
       ],
     },

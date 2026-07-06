@@ -17,6 +17,7 @@ import dayjs from "dayjs";
 import { Screen } from "@/src/components/Screen";
 import { Avatar } from "@/src/components/Avatar";
 import { Button } from "@/src/components/Button";
+import { ReportModal } from "@/src/components/ReportModal";
 import { api } from "@/src/api/client";
 import { colors, spacing, radius, levelMeta } from "@/src/theme";
 
@@ -32,6 +33,8 @@ export default function GroupDetail() {
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [joinMsg, setJoinMsg] = useState("");
   const [showRequests, setShowRequests] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [showReport, setShowReport] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -144,8 +147,13 @@ export default function GroupDetail() {
             <Pressable onPress={() => router.back()} style={styles.iconBtn} hitSlop={12} testID="group-back">
               <Ionicons name="chevron-back" size={22} color={colors.text} />
             </Pressable>
-            <Pressable style={styles.iconBtn} hitSlop={12} testID="group-share">
-              <Ionicons name="share-outline" size={20} color={colors.text} />
+            <Pressable
+              style={styles.iconBtn}
+              hitSlop={12}
+              onPress={() => setShowMenu(true)}
+              testID="group-menu-button"
+            >
+              <Ionicons name="ellipsis-horizontal" size={20} color={colors.text} />
             </Pressable>
           </View>
 
@@ -226,6 +234,37 @@ export default function GroupDetail() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>À propos</Text>
           <Text style={styles.description}>{group.description}</Text>
+
+          {/* Preferred days + positions needed */}
+          {(group.preferred_days?.length > 0 || group.positions_needed?.length > 0) && (
+            <View style={styles.metaCard}>
+              {group.preferred_days?.length > 0 && (
+                <View style={styles.metaBlock}>
+                  <Text style={styles.metaLabel}>JOURS DE MATCH</Text>
+                  <View style={styles.metaChips}>
+                    {group.preferred_days.map((d: string) => (
+                      <View key={d} style={styles.dayChip}>
+                        <Text style={styles.dayChipText}>{dayShort(d)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+              {group.positions_needed?.length > 0 && (
+                <View style={[styles.metaBlock, { marginTop: group.preferred_days?.length > 0 ? 12 : 0 }]}>
+                  <Text style={styles.metaLabel}>POSTES RECHERCHÉS</Text>
+                  <View style={styles.metaChips}>
+                    {group.positions_needed.map((p: string) => (
+                      <View key={p} style={styles.posChip}>
+                        <Ionicons name="search" size={11} color={colors.primary} />
+                        <Text style={styles.posChipText}>{p}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+            </View>
+          )}
         </View>
 
         {/* Next matches list */}
@@ -347,8 +386,68 @@ export default function GroupDetail() {
           </View>
         </View>
       </Modal>
+
+      {/* Group actions menu */}
+      <Modal visible={showMenu} transparent animationType="slide" onRequestClose={() => setShowMenu(false)}>
+        <View style={styles.modalWrap}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setShowMenu(false)} />
+          <View style={styles.modalCard} testID="group-menu">
+            <View style={styles.modalGrip} />
+            <Pressable
+              onPress={() => setShowMenu(false)}
+              style={styles.menuItem}
+              testID="menu-share"
+            >
+              <Ionicons name="share-outline" size={20} color={colors.text} />
+              <Text style={styles.menuText}>Partager le groupe</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                setShowMenu(false);
+                setShowReport(true);
+              }}
+              style={styles.menuItem}
+              testID="menu-report"
+            >
+              <Ionicons name="flag-outline" size={20} color={colors.accent} />
+              <Text style={[styles.menuText, { color: colors.accent }]}>Signaler ce groupe</Text>
+            </Pressable>
+            {status !== "admin" && (
+              <Pressable
+                onPress={async () => {
+                  setShowMenu(false);
+                  if (!id) return;
+                  await api.block("group", id);
+                  router.back();
+                }}
+                style={styles.menuItem}
+                testID="menu-block"
+              >
+                <Ionicons name="ban-outline" size={20} color={colors.danger} />
+                <Text style={[styles.menuText, { color: colors.danger }]}>Bloquer ce groupe</Text>
+              </Pressable>
+            )}
+            <Pressable onPress={() => setShowMenu(false)} style={[styles.menuItem, { justifyContent: "center", marginTop: 4 }]}>
+              <Text style={{ fontFamily: "DMSans-Medium", color: colors.textSecondary }}>Annuler</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <ReportModal
+        visible={showReport}
+        targetType="group"
+        targetId={id ?? ""}
+        targetName={group.name}
+        onClose={() => setShowReport(false)}
+      />
     </View>
   );
+}
+
+function dayShort(k: string) {
+  const map: Record<string, string> = { mon: "Lun", tue: "Mar", wed: "Mer", thu: "Jeu", fri: "Ven", sat: "Sam", sun: "Dim" };
+  return map[k] ?? k;
 }
 
 const styles = StyleSheet.create({

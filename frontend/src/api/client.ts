@@ -85,17 +85,30 @@ export const api = {
   getUser: (id: string) => request<any>(`/users/${id}`),
 
   // Groups
-  listGroups: (params?: { q?: string; level?: string; city?: string; sort?: string }) => {
+  listGroups: (params?: {
+    q?: string;
+    level?: string;
+    city?: string;
+    sort?: string;
+    radius_km?: number;
+    day?: string;
+    position?: string;
+  }) => {
     const qs = new URLSearchParams();
     if (params?.q) qs.set("q", params.q);
     if (params?.level) qs.set("level", params.level);
     if (params?.city) qs.set("city", params.city);
     if (params?.sort) qs.set("sort", params.sort);
+    if (params?.radius_km !== undefined) qs.set("radius_km", String(params.radius_km));
+    if (params?.day) qs.set("day", params.day);
+    if (params?.position) qs.set("position", params.position);
     const s = qs.toString();
     return request<any[]>(`/groups${s ? "?" + s : ""}`);
   },
   getGroup: (id: string) => request<any>(`/groups/${id}`),
   createGroup: (body: any) => request<any>("/groups", { method: "POST", body: JSON.stringify(body) }),
+  updateGroup: (id: string, body: any) =>
+    request<any>(`/groups/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   joinGroup: (id: string, message?: string) =>
     request<any>(`/groups/${id}/join`, {
       method: "POST",
@@ -134,6 +147,18 @@ export const api = {
     }),
   joinMatch: (id: string) => request<any>(`/matches/${id}/join`, { method: "POST" }),
   leaveMatch: (id: string) => request<any>(`/matches/${id}/leave`, { method: "POST" }),
+
+  // Reports & Blocks (moderation)
+  report: (body: { target_type: "user" | "group"; target_id: string; reason: string; message?: string }) =>
+    request<any>("/reports", { method: "POST", body: JSON.stringify(body) }),
+  block: (target_type: "user" | "group", target_id: string) =>
+    request<any>("/blocks", {
+      method: "POST",
+      body: JSON.stringify({ target_type, target_id }),
+    }),
+  unblock: (target_type: "user" | "group", target_id: string) =>
+    request<any>(`/blocks/${target_type}/${target_id}`, { method: "DELETE" }),
+  listBlocks: () => request<any[]>("/blocks"),
 };
 
 export { ApiError };
