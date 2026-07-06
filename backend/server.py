@@ -370,7 +370,15 @@ class RegisterPushBody(BaseModel):
 
 @api.post("/register-push", status_code=201)
 async def register_push(body: RegisterPushBody, user: dict = Depends(current_user)):
-    """Register a device token with Emergent push provider for the current user."""
+    """Register a device token with Emergent push provider for the current user.
+
+    Graceful degrade: if EMERGENT_PUSH_KEY is missing/placeholder, we log and return
+    'skipped' so the app can proceed. Real push delivery happens post-deploy when
+    the key is injected by the deployment pipeline.
+    """
+    if not PUSH_KEY or PUSH_KEY == "placeholder":
+        logger.info("register_push skipped: push key not configured")
+        return {"status": "skipped"}
     try:
         resp = await _push_client.post(
             "/api/v1/push/users/register",
@@ -381,14 +389,15 @@ async def register_push(body: RegisterPushBody, user: dict = Depends(current_use
             },
         )
         if resp.status_code == 401:
-            raise HTTPException(500, "EMERGENT_PUSH_KEY missing or invalid")
+            logger.warning("register_push: Emergent push key rejected")
+            return {"status": "skipped"}
         if resp.status_code >= 500:
-            raise HTTPException(502, "Push provider unavailable")
+            logger.warning("register_push: provider 5xx %s", resp.status_code)
+            return {"status": "skipped"}
         resp.raise_for_status()
-    except HTTPException:
-        raise
     except Exception as e:
         logger.warning("register_push failed: %s", e)
+        return {"status": "skipped"}
     return {"status": "registered"}
 
 

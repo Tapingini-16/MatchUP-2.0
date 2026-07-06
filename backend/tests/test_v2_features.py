@@ -119,7 +119,6 @@ class TestJoinRequests:
         email = f"testrej_{uuid.uuid4().hex[:8]}@example.com"
         r = requests.post(f"{API}/auth/register", json={"email": email, "password": "pass1234", "name": "TEST Reject"})
         u_hdr = {"Authorization": f"Bearer {r.json()['token']}"}
-        u_id = r.json()["user"]["id"]
 
         gid = demo_admin_group["id"]
         r2 = requests.post(f"{API}/groups/{gid}/join", json={}, headers=u_hdr)
