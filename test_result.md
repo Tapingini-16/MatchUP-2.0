@@ -543,6 +543,35 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: |
+      V5 Geolocation feature COMPLETE and TESTED (backend + frontend).
+
+      Backend (Photon primary, Nominatim fallback, both free OSS):
+      - GET /api/geocode/search  |  GET /api/geocode/reverse (User-Agent + LRU cache)
+      - Group create persists field_location/field_lat/field_lng
+      - Match model has formatted_address, location_lat, location_lng
+      - User model accepts formatted_address, latitude, longitude
+      - Seed generates realistic Paris coordinates for demo groups/matches.
+
+      Frontend reusable components:
+      - LeafletMap: `.web.tsx` (DOM + CDN) & `.native.tsx` (WebView) — dual platform,
+        interactive Leaflet map with OpenStreetMap tiles, draggable/click marker,
+        multi-marker rendering.
+      - AddressAutocomplete: debounced Nominatim/Photon search, in-memory cache,
+        stale-response guard, Array.isArray defensive checks.
+      - LocationPicker: unified picker (autocomplete + map), "Use my location"
+        button (expo-location), reverse-geocode after drag, coordinate chip.
+      - services/geocoding.ts: client-side dedup cache.
+
+      Screens wired: create-group, create-match, edit-profile, map, group/[id],
+      match/[id]. All 3 auto-frontend checks pass (map renders tiles + markers,
+      create-group autocomplete returns 12 suggestions for "Parc des Princes" and
+      shows the map + coord chip, create-match end-to-end works).
+
+      API client now uses smart base URL resolution (same-origin on preview, 
+      localhost:8001 on local/native). frontend/.env removed to avoid leaking
+      localhost into a preview build.
+  - agent: "main"
+    message: |
       V4 wave complete: rebrand + keyboard fix + polls + photos + share/leave + ratings + map + security.
       Please test the V4 backend endpoints listed under `current_focus`, then the frontend flows.
       Test creds: demo@matchup.app / demo1234 (also sarah/leo/tom @matchup.app).

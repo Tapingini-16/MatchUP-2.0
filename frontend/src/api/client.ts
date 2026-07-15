@@ -1,7 +1,23 @@
 // MatchUp API client — thin fetch wrapper with token injection
 import { storage } from "@/src/utils/storage";
 
-const BASE_URL = process.env.EXPO_PUBLIC_BACKEND_URL ?? "";
+// Base URL strategy (works across local dev, native, and preview URLs):
+//  1. Explicit env var wins (EXPO_PUBLIC_BACKEND_URL) — useful for staging overrides.
+//  2. Web on a NON-localhost origin (Emergent preview URL, custom domain) → "" so
+//     /api/* is served from the SAME origin (routed by ingress to the backend).
+//  3. Web on localhost OR native (iOS/Android) → fallback to http://localhost:8001.
+function resolveBaseUrl(): string {
+  const explicit = process.env.EXPO_PUBLIC_BACKEND_URL;
+  if (explicit && explicit.length > 0) return explicit.replace(/\/+$/, "");
+  if (typeof window !== "undefined" && (window as any).location) {
+    const host = ((window as any).location.hostname || "").toLowerCase();
+    const isLocal = host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0";
+    if (!isLocal) return ""; // same-origin: /api/* handled by ingress
+  }
+  return "http://localhost:8001";
+}
+
+const BASE_URL = resolveBaseUrl();
 const TOKEN_KEY = "pf_auth_token";
 
 let cachedToken: string | null = null;
