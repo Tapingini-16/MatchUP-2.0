@@ -1663,15 +1663,27 @@ async def root():
     return {"app": "MatchUp", "version": "1.0.0"}
 
 
-# ============= GEOCODING (Nominatim OSM proxy) =============
-# Free & open-source. Nominatim policy: <=1 req/s, valid User-Agent, cache responses.
+# ============= GEOCODING (Photon + Nominatim OSM \u2014 free & open-source) =============
+# Primary: Photon (photon.komoot.io) \u2014 built for autocomplete, permissive limits, OSM data.
+# Fallback / reverse: Nominatim (nominatim.openstreetmap.org).
+# Both are free, open-source, and do NOT require any API key or credit card.
 NOMINATIM_BASE = "https://nominatim.openstreetmap.org"
+PHOTON_BASE = "https://photon.komoot.io"
+
 _geo_client = httpx.AsyncClient(
     base_url=NOMINATIM_BASE,
     headers={
         "User-Agent": "MatchUp/1.0 (contact: support@matchup.app)",
         "Accept": "application/json",
         "Accept-Language": "fr,en;q=0.8",
+    },
+    timeout=10.0,
+)
+_photon_client = httpx.AsyncClient(
+    base_url=PHOTON_BASE,
+    headers={
+        "User-Agent": "MatchUp/1.0 (contact: support@matchup.app)",
+        "Accept": "application/json",
     },
     timeout=10.0,
 )
@@ -1714,7 +1726,6 @@ def _format_nominatim_item(item: dict) -> dict:
     )
     country = addr.get("country") or ""
     display = item.get("display_name") or ""
-    # A shorter "primary label"
     primary = item.get("name") or display.split(",")[0].strip()
     return {
         "place_id": str(item.get("place_id") or item.get("osm_id") or f"{lat},{lon}"),
@@ -1732,13 +1743,67 @@ def _format_nominatim_item(item: dict) -> dict:
     }
 
 
+def _format_photon_feature(feat: dict) -> dict:
+    """Normalize a Photon GeoJSON feature to our lightweight shape."""
+    try:
+        geom = feat.get("geometry") or {}
+        coords = geom.get("coordinates") or []
+        if len(coords) < 2:
+            return {}
+        lon = float(coords[0])
+        lat = float(coords[1])
+    except (TypeError, ValueError):
+        return {}
+    props = feat.get("properties") or {}
+    name = props.get("name") or ""
+    city = props.get("city") or props.get("locality") or props.get("district") or props.get("county") or ""
+    country = props.get("country") or ""
+    street = props.get("street") or ""
+    housenumber = props.get("housenumber") or ""
+    postcode = props.get("postcode") or ""
+    state = props.get("state") or ""
+    parts = []
+    if name and name.lower() != (street or "").lower():
+        parts.append(name)
+    if housenumber and street:
+        parts.append(f"{housenumber} {street}")
+    elif street:
+        parts.append(street)
+    if postcode and city:
+        parts.append(f"{postcode} {city}")
+    elif city:
+        parts.append(city)
+    if state and state != city:
+        parts.append(state)
+    if country:
+        parts.append(country)
+    display = ", ".join([p for p in parts if p])
+    primary = name or (street or "") or display.split(",")[0].strip() or f"{lat},{lon}"
+    osm_id = props.get("osm_id") or ""
+    osm_type = props.get("osm_type") or ""
+    return {
+        "place_id": f"photon-{osm_type}{osm_id}" if osm_id else f"{lat},{lon}",
+        "primary": primary,
+        "secondary": display,
+        "display_name": display,
+        "formatted_address": display or f"{lat}, {lon}",
+        "latitude": round(lat, 6),
+        "longitude": round(lon, 6),
+        "city": city,
+        "country": country,
+        "type": props.get("type"),
+        "class": props.get("osm_key"),
+        "importance": None,
+    }
+
+
 @api.get("/geocode/search")
 async def geocode_search(
     q: str = Query(..., min_length=2, max_length=200),
     limit: int = 6,
     lang: str = "fr",
 ):
-    """Autocomplete/search addresses via Nominatim (OSM). Free & open-source."""
+    """Autocomplete/search addresses. Free & open-source (Photon + Nominatim fallback)."""
     q_clean = q.strip()
     if len(q_clean) < 2:
         return []
@@ -1747,30 +1812,50 @@ async def geocode_search(
     cached = _geo_cache_get(cache_key)
     if cached is not None:
         return cached
+
+    items: list = []
+
+    # ---- Attempt 1: Photon (built for autocomplete, permissive limits) ----
     try:
-        r = await _geo_client.get(
-            "/search",
-            params={
-                "q": q_clean,
-                "format": "jsonv2",
-                "addressdetails": 1,
-                "limit": limit,
-                "accept-language": lang,
-            },
+        r = await _photon_client.get(
+            "/api/",
+            params={"q": q_clean, "limit": limit, "lang": lang},
         )
-        r.raise_for_status()
-        raw = r.json() or []
+        if r.status_code == 200:
+            data = r.json() or {}
+            feats = data.get("features") or []
+            items = [x for x in (_format_photon_feature(f) for f in feats) if x]
     except Exception as e:
-        logger.warning("nominatim search failed: %s", e)
-        raise HTTPException(status_code=502, detail="Geocoding service unavailable")
-    items = [x for x in (_format_nominatim_item(it) for it in raw) if x]
+        logger.info("photon search failed: %s", e)
+
+    # ---- Attempt 2: Nominatim fallback ----
+    if not items:
+        try:
+            r = await _geo_client.get(
+                "/search",
+                params={
+                    "q": q_clean,
+                    "format": "jsonv2",
+                    "addressdetails": 1,
+                    "limit": limit,
+                    "accept-language": lang,
+                },
+            )
+            if r.status_code == 200:
+                raw = r.json() or []
+                items = [x for x in (_format_nominatim_item(it) for it in raw) if x]
+            elif r.status_code == 429:
+                logger.warning("nominatim rate limited (429)")
+        except Exception as e:
+            logger.info("nominatim search failed: %s", e)
+
     _geo_cache_put(cache_key, items)
     return items
 
 
 @api.get("/geocode/reverse")
 async def geocode_reverse(lat: float, lon: float, lang: str = "fr"):
-    """Reverse-geocode a coordinate into a human-readable address."""
+    """Reverse-geocode a coordinate. Free & open-source (Photon + Nominatim fallback)."""
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         raise HTTPException(status_code=400, detail="Invalid coordinates")
     lat_r = round(float(lat), 5)
@@ -1779,24 +1864,44 @@ async def geocode_reverse(lat: float, lon: float, lang: str = "fr"):
     cached = _geo_cache_get(cache_key)
     if cached is not None:
         return cached
+
+    item: dict = {}
+
+    # ---- Photon reverse ----
     try:
-        r = await _geo_client.get(
+        r = await _photon_client.get(
             "/reverse",
-            params={
-                "lat": lat_r,
-                "lon": lon_r,
-                "format": "jsonv2",
-                "addressdetails": 1,
-                "accept-language": lang,
-                "zoom": 18,
-            },
+            params={"lat": lat_r, "lon": lon_r, "lang": lang},
         )
-        r.raise_for_status()
-        raw = r.json() or {}
+        if r.status_code == 200:
+            data = r.json() or {}
+            feats = data.get("features") or []
+            if feats:
+                item = _format_photon_feature(feats[0])
     except Exception as e:
-        logger.warning("nominatim reverse failed: %s", e)
-        raise HTTPException(status_code=502, detail="Geocoding service unavailable")
-    item = _format_nominatim_item(raw) if raw else {}
+        logger.info("photon reverse failed: %s", e)
+
+    # ---- Nominatim reverse fallback ----
+    if not item:
+        try:
+            r = await _geo_client.get(
+                "/reverse",
+                params={
+                    "lat": lat_r,
+                    "lon": lon_r,
+                    "format": "jsonv2",
+                    "addressdetails": 1,
+                    "accept-language": lang,
+                    "zoom": 18,
+                },
+            )
+            if r.status_code == 200:
+                raw = r.json() or {}
+                if raw:
+                    item = _format_nominatim_item(raw)
+        except Exception as e:
+            logger.info("nominatim reverse failed: %s", e)
+
     if not item:
         item = {
             "place_id": f"{lat_r},{lon_r}",

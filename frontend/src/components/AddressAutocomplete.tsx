@@ -46,8 +46,10 @@ export default function AddressAutocomplete({
     try {
       const list = await searchAddress(q, 6);
       if (myId !== reqIdRef.current) return; // stale
-      setResults(list);
+      setResults(Array.isArray(list) ? list : []);
       setOpen(true);
+    } catch {
+      if (myId === reqIdRef.current) setResults([]);
     } finally {
       if (myId === reqIdRef.current) setLoading(false);
     }
@@ -125,7 +127,7 @@ export default function AddressAutocomplete({
               <Text style={styles.emptyText}>Recherche...</Text>
             </View>
           ) : (
-            results.map((r) => (
+            (Array.isArray(results) ? results : []).map((r) => (
               <Pressable
                 key={r.place_id}
                 onPress={() => handleSelect(r)}

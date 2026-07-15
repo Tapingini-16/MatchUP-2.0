@@ -38,8 +38,9 @@ export async function searchAddress(q: string, limit = 6): Promise<GeoResult[]> 
   if (cached) return cached;
   try {
     const res = await apiClient.geocodeSearch(query, limit);
-    cachePut(_searchCache, key, res);
-    return res;
+    const safe = Array.isArray(res) ? (res as GeoResult[]) : [];
+    cachePut(_searchCache, key, safe);
+    return safe;
   } catch {
     return [];
   }

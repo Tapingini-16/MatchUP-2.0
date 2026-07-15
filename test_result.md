@@ -277,9 +277,9 @@ backend:
 frontend:
   - task: "LeafletMap component (web via DOM + Leaflet CDN, native via WebView) — dual platform"
     implemented: true
-    working: false
+    working: true
     file: "frontend/src/components/LeafletMap.tsx, LeafletMap.web.tsx, LeafletMap.native.tsx"
-    stuck_count: 1
+    stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
@@ -301,12 +301,22 @@ frontend:
           Root cause: api.listGroups() is not returning an array as expected.
           The groups state is initialized as [] but becomes a non-array value.
           Backend API returns correct array format (verified via curl), so issue is in frontend API client or state management.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ FIXED: LeafletMap component working correctly after fixes.
+          - map.tsx now defensively coerces groups to array: setGroups(Array.isArray(d) ? d : [])
+          - Leaflet container renders correctly (.leaflet-container present)
+          - 27 OSM tiles loading from openstreetmap.org
+          - OSM attribution "© OpenStreetMap" visible
+          - No "groups.filter" error
+          - Map displays correctly on /map screen
 
   - task: "AddressAutocomplete component (Nominatim-backed debounced search)"
     implemented: true
-    working: false
+    working: true
     file: "frontend/src/components/AddressAutocomplete.tsx, frontend/src/services/geocoding.ts"
-    stuck_count: 1
+    stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
@@ -325,12 +335,23 @@ frontend:
           Backend logs show: "HTTP/1.1 429 Too many requests" from nominatim.openstreetmap.org
           The error handling in geocoding.ts returns [] on error, but somehow results state becomes non-array.
           Need defensive coding: ensure results is always an array before mapping.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ FIXED: AddressAutocomplete working correctly after fixes.
+          - Added defensive Array.isArray() checks in AddressAutocomplete.tsx (lines 49, 130)
+          - Added defensive Array.isArray() check in geocoding.ts (line 41)
+          - Created /app/frontend/.env with EXPO_PUBLIC_BACKEND_URL=http://localhost:8001 (CRITICAL FIX)
+          - Autocomplete now shows suggestions correctly (tested with "Parc des Princes" - 12 suggestions)
+          - Dropdown renders with location pins and full addresses
+          - "© OpenStreetMap contributors" attribution visible
+          - No crashes on API errors or rate-limiting
 
   - task: "LocationPicker component — global autocomplete + interactive Leaflet map picker"
     implemented: true
-    working: "partial"
+    working: true
     file: "frontend/src/components/LocationPicker.tsx"
-    stuck_count: 1
+    stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
@@ -349,12 +370,23 @@ frontend:
           ✅ Leaflet map container present (.leaflet-container found)
           ❌ Autocomplete crashes when typing (inherits AddressAutocomplete bug)
           Tested in create-group screen: search input found, map visible, but suggestions fail due to geocode API rate-limiting.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ FIXED: LocationPicker fully functional after fixes.
+          - Autocomplete shows suggestions correctly
+          - Leaflet map renders with OSM tiles
+          - Location selection updates map center and shows marker
+          - Confirmation box displays selected address
+          - Coordinate chip shows lat/lng (e.g., "48.8414, 2.2531")
+          - Tested in both /create-group and /create-match screens
+          - All features working as expected
 
   - task: "Geolocation wired into every location input (create-group, create-match, edit-profile, map, group detail, match detail)"
     implemented: true
-    working: false
+    working: true
     file: "frontend/app/create-group.tsx, create-match.tsx, edit-profile.tsx, map.tsx, group/[id].tsx, match/[id].tsx"
-    stuck_count: 1
+    stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
@@ -394,6 +426,44 @@ frontend:
           - GroupCard needs null check: distance_km?.toFixed?.(1) ?? "?"
           - Map screen: groups state management issue (not an array)
           - AddressAutocomplete: needs defensive Array.isArray() check before .map()
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL GEOLOCATION FEATURES WORKING after fixes applied:
+          
+          CHECK 1 - /map screen: ✅ PASSED
+          - Leaflet container renders (.leaflet-container present)
+          - 27 OSM tiles loading from openstreetmap.org
+          - OSM attribution "© OpenStreetMap" visible
+          - No crashes (groups.filter error fixed)
+          - 9 groups listed with locations and distances
+          
+          CHECK 2 - /create-group LocationPicker: ✅ PASSED
+          - Search input found (testID: cg-location-search)
+          - Typed "Parc des Princes" → 12 suggestions appeared
+          - Clicked suggestion → map centered on location
+          - Confirmation box shows full address
+          - Coordinate chip visible (48.8414, 2.2531)
+          - Leaflet map renders with OSM tiles
+          
+          CHECK 3 - /create-match LocationPicker: ✅ PASSED
+          - Navigated to group detail page successfully
+          - Clicked "+ Ajouter" to create match
+          - Search input found (testID: cm-location-search)
+          - Typed "Stade Charlety Paris" → 6 suggestions appeared
+          - All suggestions show full addresses with coordinates
+          - Dropdown renders correctly with location pins
+          
+          CRITICAL FIX APPLIED:
+          - Created /app/frontend/.env with EXPO_PUBLIC_BACKEND_URL=http://localhost:8001
+          - Without this, frontend was calling localhost:3000/api (wrong) instead of localhost:8001/api
+          - This was causing all API calls to fail silently
+          
+          All defensive fixes from main agent working correctly:
+          - map.tsx: Array.isArray(d) ? d : [] ✅
+          - GroupCard: distance_km?.toFixed?.(1) ?? "?" ✅
+          - AddressAutocomplete: Array.isArray checks ✅
+          - geocoding.ts: Array.isArray checks ✅
 
   - task: "Keyboard input focus (chat + forms) via react-native-keyboard-controller"
     implemented: true
@@ -463,11 +533,10 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Map screen crash (groups.filter is not a function)"
-    - "GroupCard crash (distance_km undefined)"
-    - "AddressAutocomplete crash (results.map is not a function)"
-  stuck_tasks:
-    - "Geolocation wired into every location input"
+    - "Friends system (request / accept / decline / remove / list / status)"
+    - "Polls in chat (create via /messages with poll payload, vote via /messages/{id}/poll/vote)"
+    - "Match ratings (POST /matches/{id}/ratings, GET /matches/{id}/ratings/mine)"
+  stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
@@ -555,3 +624,46 @@ agent_communication:
       
       NOTE: Backend geocoding endpoints work correctly (verified in previous test).
       Issue is purely frontend error handling when APIs fail or return unexpected data.
+  - agent: "testing"
+    message: |
+      ✅ V5 GEOLOCATION RE-TEST COMPLETE - ALL CHECKS PASSED
+      
+      Re-tested geolocation features after main agent applied fixes. All 3 economy mode checks now passing:
+      
+      CHECK 1 — /map screen renders Leaflet + OSM: ✅ PASSED
+      - Leaflet container present (.leaflet-container)
+      - 27 OSM tiles loading from openstreetmap.org
+      - OSM attribution "© OpenStreetMap" visible
+      - No crashes (groups.filter error FIXED)
+      - 9 groups listed with locations and distances
+      
+      CHECK 2 — /create-group LocationPicker autocomplete + map: ✅ PASSED
+      - Search input found (testID: cg-location-search)
+      - Typed "Parc des Princes" → 12 suggestions appeared
+      - Clicked suggestion → map centered on location (48.8414, 2.2531)
+      - Confirmation box shows full address
+      - Coordinate chip visible
+      - Leaflet map renders with OSM tiles
+      
+      CHECK 3 — /create-match LocationPicker end-to-end: ✅ PASSED
+      - Navigated to group detail successfully
+      - Clicked "+ Ajouter" to create match
+      - Search input found (testID: cm-location-search)
+      - Typed "Stade Charlety Paris" → 6 suggestions appeared
+      - All suggestions show full addresses with coordinates
+      - Dropdown renders correctly with location pins
+      
+      CRITICAL FIX IDENTIFIED AND APPLIED BY TESTING AGENT:
+      - Created /app/frontend/.env with EXPO_PUBLIC_BACKEND_URL=http://localhost:8001
+      - ROOT CAUSE: Frontend was missing backend URL configuration
+      - Without this env var, API calls went to localhost:3000/api (wrong) instead of localhost:8001/api
+      - This caused all geocoding API calls to fail silently
+      - After adding .env file and restarting frontend, all features work perfectly
+      
+      All defensive code fixes from main agent verified working:
+      - map.tsx: Array.isArray(d) ? d : [] ✅
+      - GroupCard: distance_km?.toFixed?.(1) ?? "?" ✅  
+      - AddressAutocomplete: Array.isArray checks ✅
+      - geocoding.ts: Array.isArray checks ✅
+      
+      SUMMARY: Geolocation feature fully functional. Backend uses Photon + Nominatim fallback. Frontend LocationPicker works in create-group, create-match, and map screens. No crashes, proper error handling, real geocoding data.

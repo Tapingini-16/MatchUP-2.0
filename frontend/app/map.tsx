@@ -18,7 +18,9 @@ export default function MapScreen() {
   const load = useCallback(async () => {
     try {
       const d = await api.listGroups({ sort: "distance" });
-      setGroups(d);
+      setGroups(Array.isArray(d) ? d : []);
+    } catch {
+      setGroups([]);
     } finally {
       setLoading(false);
     }

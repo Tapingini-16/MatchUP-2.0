@@ -46,7 +46,7 @@ export function GroupCard({ group, onPress }: { group: Group; onPress: () => voi
         {/* Distance pill */}
         <View style={styles.distancePill}>
           <Ionicons name="location" size={12} color={colors.primary} />
-          <Text style={styles.distanceText}>{group.distance_km.toFixed(1)} km</Text>
+          <Text style={styles.distanceText}>{(typeof group.distance_km === "number" ? group.distance_km : 0).toFixed(1)} km</Text>
         </View>
         {/* Level pill */}
         <View style={[styles.levelPill, { backgroundColor: lvl.color + "22", borderColor: lvl.color }]}>
