@@ -277,11 +277,11 @@ backend:
 frontend:
   - task: "LeafletMap component (web via DOM + Leaflet CDN, native via WebView) — dual platform"
     implemented: true
-    working: "NA"
+    working: false
     file: "frontend/src/components/LeafletMap.tsx, LeafletMap.web.tsx, LeafletMap.native.tsx"
-    stuck_count: 0
+    stuck_count: 1
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
@@ -293,14 +293,22 @@ frontend:
           - .native.tsx: same feature-set via react-native-webview inline HTML that
             loads Leaflet from the same CDN and postMessage()s selection back to RN.
           Styled to match the dark theme (custom pin icons, attribution).
+      - working: false
+        agent: "testing"
+        comment: |
+          ❌ CRITICAL: Map screen crashes on load - cannot test Leaflet rendering.
+          Error: "groups.filter is not a function" at app/map.tsx:33
+          Root cause: api.listGroups() is not returning an array as expected.
+          The groups state is initialized as [] but becomes a non-array value.
+          Backend API returns correct array format (verified via curl), so issue is in frontend API client or state management.
 
   - task: "AddressAutocomplete component (Nominatim-backed debounced search)"
     implemented: true
-    working: "NA"
+    working: false
     file: "frontend/src/components/AddressAutocomplete.tsx, frontend/src/services/geocoding.ts"
-    stuck_count: 0
+    stuck_count: 1
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
@@ -308,14 +316,23 @@ frontend:
           TextInput + dropdown of real Nominatim results. 450ms debounce, in-memory
           cache, stale-response guard. Handles minChars=3, empty query, loading state,
           clear button, and "© OpenStreetMap contributors" attribution.
+      - working: false
+        agent: "testing"
+        comment: |
+          ❌ CRITICAL: Component crashes when geocode API fails.
+          Error: "results.map is not a function" at AddressAutocomplete.tsx:128
+          Trigger: Nominatim rate-limiting (HTTP 429) → backend returns 502 → frontend crashes
+          Backend logs show: "HTTP/1.1 429 Too many requests" from nominatim.openstreetmap.org
+          The error handling in geocoding.ts returns [] on error, but somehow results state becomes non-array.
+          Need defensive coding: ensure results is always an array before mapping.
 
   - task: "LocationPicker component — global autocomplete + interactive Leaflet map picker"
     implemented: true
-    working: "NA"
+    working: "partial"
     file: "frontend/src/components/LocationPicker.tsx"
-    stuck_count: 0
+    stuck_count: 1
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
@@ -324,14 +341,22 @@ frontend:
           Emits { formatted_address, latitude, longitude, city?, country? }. Includes
           "Use current location" button (expo-location), reverse-geocoding when the pin
           is dragged, and a coordinate chip for feedback.
+      - working: "partial"
+        agent: "testing"
+        comment: |
+          ⚠️ PARTIAL: Component structure is correct but autocomplete crashes on search.
+          ✅ LocationPicker renders with search input + Leaflet map preview
+          ✅ Leaflet map container present (.leaflet-container found)
+          ❌ Autocomplete crashes when typing (inherits AddressAutocomplete bug)
+          Tested in create-group screen: search input found, map visible, but suggestions fail due to geocode API rate-limiting.
 
   - task: "Geolocation wired into every location input (create-group, create-match, edit-profile, map, group detail, match detail)"
     implemented: true
-    working: "NA"
+    working: false
     file: "frontend/app/create-group.tsx, create-match.tsx, edit-profile.tsx, map.tsx, group/[id].tsx, match/[id].tsx"
-    stuck_count: 0
+    stuck_count: 1
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: "NA"
         agent: "main"
@@ -345,6 +370,30 @@ frontend:
           - map.tsx: rewritten to use LeafletMap on ALL platforms (no more mock).
           - group/[id]: renders read-only LeafletMap preview under the field card.
           - match/[id]: renders read-only LeafletMap preview under the location row.
+      - working: false
+        agent: "testing"
+        comment: |
+          ❌ CRITICAL: Multiple blocking issues prevent full testing:
+          
+          1. Map screen (/map): CRASHES on load
+             - Error: "groups.filter is not a function"
+             - Cannot verify Leaflet + OSM tiles rendering
+          
+          2. Create-match screen: CANNOT TEST
+             - Tabs screen crashes when loading groups list
+             - Error: "Cannot read properties of undefined (reading 'toFixed')"
+             - GroupCard expects distance_km but it's undefined for some groups
+          
+          3. Create-group screen: PARTIAL SUCCESS
+             ✅ LocationPicker correctly replaces plain city input
+             ✅ Leaflet map preview renders
+             ✅ Search input present with correct placeholder
+             ❌ Autocomplete crashes when typing (geocode API rate-limited)
+          
+          Additional bugs found:
+          - GroupCard needs null check: distance_km?.toFixed?.(1) ?? "?"
+          - Map screen: groups state management issue (not an array)
+          - AddressAutocomplete: needs defensive Array.isArray() check before .map()
 
   - task: "Keyboard input focus (chat + forms) via react-native-keyboard-controller"
     implemented: true
@@ -414,13 +463,11 @@ metadata:
 
 test_plan:
   current_focus:
-    - "OpenStreetMap Nominatim geocoding proxy (GET /api/geocode/search & /api/geocode/reverse)"
-    - "Persist geolocation fields on Groups/Matches/Users"
-    - "LeafletMap component (web via DOM + Leaflet CDN, native via WebView)"
-    - "AddressAutocomplete component"
-    - "LocationPicker component"
-    - "Geolocation wired into every location input (create-group, create-match, edit-profile, map, group detail, match detail)"
-  stuck_tasks: []
+    - "Map screen crash (groups.filter is not a function)"
+    - "GroupCard crash (distance_km undefined)"
+    - "AddressAutocomplete crash (results.map is not a function)"
+  stuck_tasks:
+    - "Geolocation wired into every location input"
   test_all: false
   test_priority: "high_first"
 
@@ -472,3 +519,39 @@ agent_communication:
       
       MINOR OBSERVATION (not a blocker):
       - User geo fields (formatted_address, latitude, longitude) are persisted in DB but not exposed in UserPublic schema. This is acceptable as the data is stored correctly and can be retrieved if needed.
+  - agent: "testing"
+    message: |
+      ❌ V5 GEOLOCATION FRONTEND TESTING - CRITICAL FAILURES FOUND
+      
+      Tested NEW geolocation feature (minimal economy mode - 3 checks only):
+      
+      CHECK 1 — Map screen renders Leaflet + OSM tiles: ❌ FAILED
+      - Map screen crashes on load with "groups.filter is not a function"
+      - Cannot verify Leaflet or OSM tiles rendering
+      - Root cause: api.listGroups() not returning array (state management issue)
+      
+      CHECK 2 — Create-match LocationPicker: ❌ CANNOT TEST
+      - Tabs screen crashes when loading groups list
+      - Error: "Cannot read properties of undefined (reading 'toFixed')"
+      - GroupCard component expects distance_km but it's undefined
+      
+      CHECK 3 — Create-group LocationPicker: ⚠️ PARTIAL SUCCESS
+      - ✅ LocationPicker correctly replaces plain city input
+      - ✅ Leaflet map preview renders (.leaflet-container found)
+      - ✅ Search input present with correct testID and placeholder
+      - ❌ Autocomplete crashes when typing due to geocode API rate-limiting
+      - Error: "results.map is not a function" in AddressAutocomplete.tsx:128
+      
+      ROOT CAUSES IDENTIFIED:
+      1. Nominatim rate-limiting (HTTP 429) → backend returns 502 → frontend lacks error handling
+      2. Frontend assumes API responses are always in expected format (no defensive coding)
+      3. Missing null checks for optional fields (distance_km)
+      
+      FIXES REQUIRED (HIGH PRIORITY):
+      1. app/map.tsx: Fix groups state initialization/handling (ensure always array)
+      2. GroupCard component: Add null check → distance_km?.toFixed?.(1) ?? "?"
+      3. AddressAutocomplete.tsx: Add defensive check → Array.isArray(results) before .map()
+      4. Consider adding retry logic or better error messages for rate-limited geocode requests
+      
+      NOTE: Backend geocoding endpoints work correctly (verified in previous test).
+      Issue is purely frontend error handling when APIs fail or return unexpected data.
