@@ -14,6 +14,7 @@ import dayjs from "dayjs";
 import { Screen } from "@/src/components/Screen";
 import { Avatar } from "@/src/components/Avatar";
 import { Button } from "@/src/components/Button";
+import LeafletMap from "@/src/components/LeafletMap";
 import { useAuth } from "@/src/context/auth";
 import { api } from "@/src/api/client";
 import { colors, spacing, radius, type as t } from "@/src/theme";
@@ -139,6 +140,19 @@ export default function MatchDetail() {
               <Ionicons name="location" size={16} color={colors.textSecondary} />
               <Text style={styles.locText}>{match.location}</Text>
             </View>
+            {typeof match.location_lat === "number" && typeof match.location_lng === "number" && (
+              <View style={{ marginTop: 12 }}>
+                <LeafletMap
+                  latitude={match.location_lat}
+                  longitude={match.location_lng}
+                  zoom={15}
+                  interactive={false}
+                  showSelectedMarker
+                  draggableMarker={false}
+                  height={180}
+                />
+              </View>
+            )}
           </View>
         </View>
 

@@ -198,6 +198,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ code, target }),
     }),
+
+  // Geocoding (OpenStreetMap Nominatim proxy)
+  geocodeSearch: (q: string, limit = 6) => {
+    const qs = new URLSearchParams({ q, limit: String(limit) });
+    return request<any[]>(`/geocode/search?${qs.toString()}`);
+  },
+  geocodeReverse: (lat: number, lon: number) => {
+    const qs = new URLSearchParams({ lat: String(lat), lon: String(lon) });
+    return request<any>(`/geocode/reverse?${qs.toString()}`);
+  },
 };
 
 export { ApiError };

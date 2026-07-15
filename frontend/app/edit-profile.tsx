@@ -13,6 +13,8 @@ import * as ImagePicker from "expo-image-picker";
 import { Screen } from "@/src/components/Screen";
 import { Button } from "@/src/components/Button";
 import { Avatar } from "@/src/components/Avatar";
+import LocationPicker from "@/src/components/LocationPicker";
+import type { PickedLocation } from "@/src/services/geocoding";
 import { useAuth } from "@/src/context/auth";
 import { colors, spacing, radius, type as t } from "@/src/theme";
 
@@ -47,6 +49,16 @@ export default function EditProfile() {
   const [name, setName] = useState(user?.name ?? "");
   const [bio, setBio] = useState(user?.bio ?? "");
   const [city, setCity] = useState(user?.city ?? "");
+  const [locationPick, setLocationPick] = useState<PickedLocation | null>(
+    user?.formatted_address && typeof user?.latitude === "number" && typeof user?.longitude === "number"
+      ? {
+          formatted_address: user.formatted_address,
+          latitude: user.latitude,
+          longitude: user.longitude,
+          city: user.city,
+        }
+      : null,
+  );
   const [age, setAge] = useState(user?.age ? String(user.age) : "");
   const [radiusKm, setRadiusKm] = useState(user?.radius_km ? String(user.radius_km) : "10");
   const [position, setPosition] = useState<string | null>(user?.position ?? null);
@@ -76,7 +88,10 @@ export default function EditProfile() {
       await updateUser({
         name: name.trim(),
         bio: bio.trim() || null,
-        city: city.trim() || null,
+        city: (locationPick?.city || city.trim() || null) as any,
+        formatted_address: locationPick?.formatted_address ?? null,
+        latitude: locationPick?.latitude ?? null,
+        longitude: locationPick?.longitude ?? null,
         age: age ? parseInt(age, 10) : null,
         radius_km: radiusKm ? parseInt(radiusKm, 10) : null,
         position,
@@ -146,7 +161,7 @@ export default function EditProfile() {
 
           <View style={{ flexDirection: "row", gap: spacing.md }}>
             <View style={{ flex: 1 }}>
-              <FieldLabel label="Ville" />
+              <FieldLabel label="Ville (rapide)" />
               <TextInput
                 testID="edit-city-input"
                 value={city}
@@ -157,7 +172,7 @@ export default function EditProfile() {
               />
             </View>
             <View style={{ width: 100 }}>
-              <FieldLabel label="Âge" />
+              <FieldLabel label="\u00c2ge" />
               <TextInput
                 value={age}
                 onChangeText={setAge}
@@ -169,6 +184,16 @@ export default function EditProfile() {
               />
             </View>
           </View>
+
+          <FieldLabel label="Adresse pr\u00e9cise (optionnel)" />
+          <LocationPicker
+            value={locationPick}
+            onChange={setLocationPick}
+            placeholder="Ex: Paris 11, 75011..."
+            hint="Sert \u00e0 calculer la distance avec les groupes/matchs pr\u00e8s de toi."
+            mapHeight={220}
+            testIDPrefix="edit-location"
+          />
 
           <FieldLabel label="Rayon (km)" />
           <TextInput

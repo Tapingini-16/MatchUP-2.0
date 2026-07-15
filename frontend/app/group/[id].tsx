@@ -19,6 +19,7 @@ import dayjs from "dayjs";
 import { Screen } from "@/src/components/Screen";
 import { Avatar } from "@/src/components/Avatar";
 import { Button } from "@/src/components/Button";
+import LeafletMap from "@/src/components/LeafletMap";
 import { ReportModal } from "@/src/components/ReportModal";
 import { ShareModal } from "@/src/components/ShareModal";
 import { RatingModal } from "@/src/components/RatingModal";
@@ -274,25 +275,40 @@ export default function GroupDetail() {
 
           {/* Field location (if set) */}
           {group.field_location && (
-            <Pressable
-              style={styles.locCard}
-              onPress={() => {
-                const url = group.field_lat && group.field_lng
-                  ? `https://www.google.com/maps/search/?api=1&query=${group.field_lat},${group.field_lng}`
-                  : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(group.field_location)}`;
-                Linking.openURL(url).catch(() => {});
-              }}
-              testID="field-location-card"
-            >
-              <View style={styles.locIcon}>
-                <Ionicons name="location" size={20} color={colors.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.locLbl}>TERRAIN HABITUEL</Text>
-                <Text style={styles.locText} numberOfLines={2}>{group.field_location}</Text>
-              </View>
-              <Ionicons name="open-outline" size={18} color={colors.textSecondary} />
-            </Pressable>
+            <>
+              <Pressable
+                style={styles.locCard}
+                onPress={() => {
+                  const url = group.field_lat && group.field_lng
+                    ? `https://www.openstreetmap.org/?mlat=${group.field_lat}&mlon=${group.field_lng}#map=17/${group.field_lat}/${group.field_lng}`
+                    : `https://www.openstreetmap.org/search?query=${encodeURIComponent(group.field_location)}`;
+                  Linking.openURL(url).catch(() => {});
+                }}
+                testID="field-location-card"
+              >
+                <View style={styles.locIcon}>
+                  <Ionicons name="location" size={20} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.locLbl}>TERRAIN HABITUEL</Text>
+                  <Text style={styles.locText} numberOfLines={2}>{group.field_location}</Text>
+                </View>
+                <Ionicons name="open-outline" size={18} color={colors.textSecondary} />
+              </Pressable>
+              {typeof group.field_lat === "number" && typeof group.field_lng === "number" && (
+                <View style={{ marginTop: spacing.md }}>
+                  <LeafletMap
+                    latitude={group.field_lat}
+                    longitude={group.field_lng}
+                    zoom={15}
+                    interactive={false}
+                    draggableMarker={false}
+                    showSelectedMarker
+                    height={180}
+                  />
+                </View>
+              )}
+            </>
           )}
         </View>
 

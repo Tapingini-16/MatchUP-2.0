@@ -12,6 +12,8 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { Screen } from "@/src/components/Screen";
 import { Button } from "@/src/components/Button";
+import LocationPicker from "@/src/components/LocationPicker";
+import type { PickedLocation } from "@/src/services/geocoding";
 import { api } from "@/src/api/client";
 import { colors, spacing, radius } from "@/src/theme";
 
@@ -53,7 +55,7 @@ export default function CreateGroup() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [city, setCity] = useState("");
+  const [location, setLocation] = useState<PickedLocation | null>(null);
   const [level, setLevel] = useState("intermediate");
   const [maxMembers, setMaxMembers] = useState("20");
   const [photo, setPhoto] = useState(COVERS[0]);
@@ -65,19 +67,22 @@ export default function CreateGroup() {
   const submit = async () => {
     setError(null);
     if (name.trim().length < 2) return setError("Choisis un nom");
-    if (city.trim().length < 2) return setError("Précise la ville");
-    if (description.trim().length < 10) return setError("Ajoute une description (10 caractères min)");
+    if (!location) return setError("S\u00e9lectionne un lieu sur la carte");
+    if (description.trim().length < 10) return setError("Ajoute une description (10 caract\u00e8res min)");
     setSaving(true);
     try {
       const g = await api.createGroup({
         name: name.trim(),
         description: description.trim(),
-        city: city.trim(),
+        city: (location.city || location.formatted_address).slice(0, 80),
         level,
         max_members: parseInt(maxMembers, 10) || 20,
         photo,
         preferred_days: preferredDays,
         positions_needed: positionsNeeded,
+        field_location: location.formatted_address,
+        field_lat: location.latitude,
+        field_lng: location.longitude,
       });
       router.replace(`/group/${g.id}`);
     } catch (e: any) {
@@ -155,13 +160,14 @@ export default function CreateGroup() {
           />
 
           <Text style={styles.label}>Ville *</Text>
-          <TextInput
-            testID="create-city-input"
-            value={city}
-            onChangeText={setCity}
-            placeholder="Paris 11"
-            placeholderTextColor={colors.textMuted}
-            style={styles.input}
+          <LocationPicker
+            label={undefined}
+            hint="Recherche ton terrain ou ta ville, puis ajuste la position en glissant l'\u00e9pingle."
+            value={location}
+            onChange={setLocation}
+            placeholder="Ex: Parc des Princes, Stade L\u00e9o Lagrange, Paris 11..."
+            mapHeight={220}
+            testIDPrefix="cg-location"
           />
 
           <Text style={styles.label}>Description *</Text>

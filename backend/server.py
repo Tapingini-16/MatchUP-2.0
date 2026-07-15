@@ -88,6 +88,9 @@ class UserUpdate(BaseModel):
     name: Optional[str] = None
     photo: Optional[str] = None
     age: Optional[int] = None
+    formatted_address: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     position: Optional[str] = None
     level: Optional[str] = None
     foot: Optional[str] = None
@@ -201,6 +204,9 @@ class MatchCreate(BaseModel):
     group_id: str
     title: str
     location: str
+    formatted_address: Optional[str] = None
+    location_lat: Optional[float] = None
+    location_lng: Optional[float] = None
     date: str  # ISO date
     max_players: int = 10
 
@@ -210,6 +216,9 @@ class MatchPublic(BaseModel):
     group_id: str
     title: str
     location: str
+    formatted_address: Optional[str] = None
+    location_lat: Optional[float] = None
+    location_lng: Optional[float] = None
     date: str
     max_players: int
     players: List[str] = []
@@ -599,6 +608,9 @@ async def create_group(body: GroupCreate, user: dict = Depends(current_user)):
         "max_members": body.max_members,
         "preferred_days": body.preferred_days,
         "positions_needed": body.positions_needed,
+        "field_location": body.field_location,
+        "field_lat": body.field_lat,
+        "field_lng": body.field_lng,
         "admin_id": user["id"],
         "created_at": now,
         "distance_km": 0.0,
@@ -911,6 +923,9 @@ async def match_to_public(m: dict) -> dict:
         "group_id": m["group_id"],
         "title": m["title"],
         "location": m["location"],
+        "formatted_address": m.get("formatted_address"),
+        "location_lat": m.get("location_lat"),
+        "location_lng": m.get("location_lng"),
         "date": m["date"],
         "max_players": m["max_players"],
         "players": m.get("players", []),
@@ -947,6 +962,9 @@ async def create_match(body: MatchCreate, user: dict = Depends(current_user)):
         "group_id": body.group_id,
         "title": body.title,
         "location": body.location,
+        "formatted_address": body.formatted_address,
+        "location_lat": body.location_lat,
+        "location_lng": body.location_lng,
         "date": body.date,
         "max_players": body.max_players,
         "players": [user["id"]],
@@ -1564,13 +1582,28 @@ async def seed_data():
     ]
 
     admins_pool = list(user_ids.values())
+    # Realistic Paris field coordinates for each demo group (index-aligned)
+    demo_field_data = [
+        ("Stade L\u00e9o Lagrange, 68 Bd Poniatowski, 75012 Paris", 48.8332, 2.4108),
+        ("City Foot R\u00e9publique, 5 Rue de Malte, 75011 Paris", 48.8674, 2.3651),
+        ("Urban Soccer Bastille, 27 Rue de Charenton, 75012 Paris", 48.8494, 2.3746),
+        ("Stade Charl\u00e9ty, 17 Avenue Pierre de Coubertin, 75013 Paris", 48.8188, 2.3450),
+        ("Parc des Princes, 24 Rue du Commandant Guilbaud, 75016 Paris", 48.8414, 2.2531),
+        ("Stade des Fillettes, 79 Rue de la Chapelle, 75018 Paris", 48.8987, 2.3599),
+        ("Stade S\u00e9bastien Charl\u00e9ty, 99 Bd K\u00e9llermann, 75013 Paris", 48.8189, 2.3452),
+        ("Stade du Bois de Vincennes, Route de la Pyramide, 94300 Vincennes", 48.8299, 2.4413),
+    ]
     for i, g in enumerate(demo_groups):
         gid = str(uuid.uuid4())
         group_admin = admins_pool[i % len(admins_pool)]
+        field_addr, flat, flng = demo_field_data[i % len(demo_field_data)]
         doc = {
             "id": gid,
             "admin_id": group_admin,
             "created_at": now,
+            "field_location": field_addr,
+            "field_lat": flat,
+            "field_lng": flng,
             **g,
         }
         await db.groups.insert_one(doc)
@@ -1590,8 +1623,11 @@ async def seed_data():
         match_doc = {
             "id": str(uuid.uuid4()),
             "group_id": gid,
-            "title": ["Match du mardi", "Foot du dimanche", "Match 5v5", "Séance hebdo"][i % 4],
-            "location": ["Stade Léo Lagrange", "City Foot République", "Urban Soccer Bastille", "Stade Charléty"][i % 4],
+            "title": ["Match du mardi", "Foot du dimanche", "Match 5v5", "S\u00e9ance hebdo"][i % 4],
+            "location": field_addr,
+            "formatted_address": field_addr,
+            "location_lat": flat,
+            "location_lng": flng,
             "date": future,
             "max_players": 12,
             "players": admins_pool[:3],
@@ -1625,6 +1661,156 @@ async def seed_data():
 @api.get("/")
 async def root():
     return {"app": "MatchUp", "version": "1.0.0"}
+
+
+# ============= GEOCODING (Nominatim OSM proxy) =============
+# Free & open-source. Nominatim policy: <=1 req/s, valid User-Agent, cache responses.
+NOMINATIM_BASE = "https://nominatim.openstreetmap.org"
+_geo_client = httpx.AsyncClient(
+    base_url=NOMINATIM_BASE,
+    headers={
+        "User-Agent": "MatchUp/1.0 (contact: support@matchup.app)",
+        "Accept": "application/json",
+        "Accept-Language": "fr,en;q=0.8",
+    },
+    timeout=10.0,
+)
+
+# Simple in-memory LRU-ish cache to respect Nominatim rate limits.
+_geo_cache: dict = {}
+_geo_cache_order: list = []
+_GEO_CACHE_MAX = 512
+
+
+def _geo_cache_get(key: str):
+    return _geo_cache.get(key)
+
+
+def _geo_cache_put(key: str, value):
+    if key in _geo_cache:
+        return
+    _geo_cache[key] = value
+    _geo_cache_order.append(key)
+    while len(_geo_cache_order) > _GEO_CACHE_MAX:
+        old = _geo_cache_order.pop(0)
+        _geo_cache.pop(old, None)
+
+
+def _format_nominatim_item(item: dict) -> dict:
+    """Normalize a Nominatim result to our lightweight shape."""
+    try:
+        lat = float(item.get("lat"))
+        lon = float(item.get("lon"))
+    except (TypeError, ValueError):
+        return {}
+    addr = item.get("address") or {}
+    city = (
+        addr.get("city")
+        or addr.get("town")
+        or addr.get("village")
+        or addr.get("municipality")
+        or addr.get("county")
+        or ""
+    )
+    country = addr.get("country") or ""
+    display = item.get("display_name") or ""
+    # A shorter "primary label"
+    primary = item.get("name") or display.split(",")[0].strip()
+    return {
+        "place_id": str(item.get("place_id") or item.get("osm_id") or f"{lat},{lon}"),
+        "primary": primary,
+        "secondary": display,
+        "display_name": display,
+        "formatted_address": display,
+        "latitude": round(lat, 6),
+        "longitude": round(lon, 6),
+        "city": city,
+        "country": country,
+        "type": item.get("type"),
+        "class": item.get("class"),
+        "importance": item.get("importance"),
+    }
+
+
+@api.get("/geocode/search")
+async def geocode_search(
+    q: str = Query(..., min_length=2, max_length=200),
+    limit: int = 6,
+    lang: str = "fr",
+):
+    """Autocomplete/search addresses via Nominatim (OSM). Free & open-source."""
+    q_clean = q.strip()
+    if len(q_clean) < 2:
+        return []
+    limit = max(1, min(limit, 10))
+    cache_key = f"s|{lang}|{limit}|{q_clean.lower()}"
+    cached = _geo_cache_get(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        r = await _geo_client.get(
+            "/search",
+            params={
+                "q": q_clean,
+                "format": "jsonv2",
+                "addressdetails": 1,
+                "limit": limit,
+                "accept-language": lang,
+            },
+        )
+        r.raise_for_status()
+        raw = r.json() or []
+    except Exception as e:
+        logger.warning("nominatim search failed: %s", e)
+        raise HTTPException(status_code=502, detail="Geocoding service unavailable")
+    items = [x for x in (_format_nominatim_item(it) for it in raw) if x]
+    _geo_cache_put(cache_key, items)
+    return items
+
+
+@api.get("/geocode/reverse")
+async def geocode_reverse(lat: float, lon: float, lang: str = "fr"):
+    """Reverse-geocode a coordinate into a human-readable address."""
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise HTTPException(status_code=400, detail="Invalid coordinates")
+    lat_r = round(float(lat), 5)
+    lon_r = round(float(lon), 5)
+    cache_key = f"r|{lang}|{lat_r},{lon_r}"
+    cached = _geo_cache_get(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        r = await _geo_client.get(
+            "/reverse",
+            params={
+                "lat": lat_r,
+                "lon": lon_r,
+                "format": "jsonv2",
+                "addressdetails": 1,
+                "accept-language": lang,
+                "zoom": 18,
+            },
+        )
+        r.raise_for_status()
+        raw = r.json() or {}
+    except Exception as e:
+        logger.warning("nominatim reverse failed: %s", e)
+        raise HTTPException(status_code=502, detail="Geocoding service unavailable")
+    item = _format_nominatim_item(raw) if raw else {}
+    if not item:
+        item = {
+            "place_id": f"{lat_r},{lon_r}",
+            "primary": f"{lat_r}, {lon_r}",
+            "secondary": "",
+            "display_name": f"{lat_r}, {lon_r}",
+            "formatted_address": f"{lat_r}, {lon_r}",
+            "latitude": lat_r,
+            "longitude": lon_r,
+            "city": "",
+            "country": "",
+        }
+    _geo_cache_put(cache_key, item)
+    return item
 
 
 # ============= REGISTER =============

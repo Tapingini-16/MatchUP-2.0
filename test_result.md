@@ -120,6 +120,88 @@ backend:
         agent: "main"
         comment: "Already covered in V1/V2 tests. Demo users now under @matchup.app emails."
 
+  - task: "OpenStreetMap Nominatim geocoding proxy (GET /api/geocode/search & /api/geocode/reverse)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          New free/open-source geocoding endpoints backed by nominatim.openstreetmap.org.
+          Server adds proper User-Agent + in-memory LRU cache (respects Nominatim policy).
+          Verified locally: /geocode/search?q=Parc%20des%20Princes returns real coords,
+          /geocode/reverse?lat=&lon= returns a formatted address.
+          Response shape: place_id, primary, secondary, display_name, formatted_address,
+          latitude, longitude, city, country, type, class, importance.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL TESTS PASSED - Comprehensive testing completed:
+          
+          GET /api/geocode/search:
+          - Query "Parc des Princes" (limit=3): Returns 2 results with all required fields (place_id, primary, secondary, display_name, formatted_address, latitude, longitude, city, country). Coords verified in Paris area (48.841363, 2.253069).
+          - Query "Stade Léo Lagrange Paris": Returns results with Paris coords (48.xx, 2.xx).
+          - Short query (q="P"): Returns 422 validation error as expected.
+          - Empty/whitespace query: Handled without crash (returns 422).
+          - Limit clamping: Correctly clamps to max 10 results.
+          - Authentication: Endpoints are open (no auth required), accessible with bearer token.
+          
+          GET /api/geocode/reverse:
+          - Valid Paris coords (48.8566, 2.3522): Returns formatted_address containing "Paris", city="Paris", country="France", with correct lat/lng.
+          - Invalid lat=100: Returns 400 error as expected.
+          - Invalid lon=-500: Returns 400 error as expected.
+          - Authentication: Open endpoint, works without auth.
+          
+          All response shapes match specification. Nominatim integration working perfectly.
+
+  - task: "Persist geolocation fields on Groups/Matches/Users (field_lat/field_lng, location_lat/location_lng, latitude/longitude, formatted_address)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          - create_group now persists body.field_location/field_lat/field_lng.
+          - MatchCreate/MatchPublic + docs now include formatted_address, location_lat, location_lng.
+          - UserUpdate accepts formatted_address, latitude, longitude.
+          - Seed data updated: 8 demo groups + their default match get real Paris coordinates
+            (Stade Léo Lagrange, Parc des Princes, Charléty, etc.).
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL TESTS PASSED - Geo field persistence verified across all entities:
+          
+          Groups (POST /api/groups, GET /api/groups/{id}):
+          - Created test group "GeoTest FC" with field_location="Parc des Princes, 24 Rue du Commandant Guilbaud, 75016 Paris", field_lat=48.8414, field_lng=2.2531.
+          - POST response includes all geo fields correctly.
+          - GET /api/groups/{id} returns all geo fields matching input (field_location, field_lat, field_lng).
+          - Persistence verified ✅
+          
+          Matches (POST /api/matches, GET /api/matches/{id}):
+          - Created test match with location="Stade Charléty, 99 Bd Kellermann, 75013 Paris", formatted_address="Stade Charléty...", location_lat=48.8188, location_lng=2.345.
+          - POST response includes all geo fields (location, formatted_address, location_lat, location_lng).
+          - GET /api/matches/{id} returns all geo fields matching input.
+          - Persistence verified ✅
+          
+          Users (PATCH /api/users/me, GET /api/auth/me):
+          - Updated user with formatted_address="Paris 11e, 75011 Paris", latitude=48.8580, longitude=2.3800.
+          - PATCH succeeds, fields persisted in database (verified via direct MongoDB query).
+          - Note: Geo fields not exposed in UserPublic schema but stored correctly in DB.
+          - Database verification: formatted_address, latitude, longitude all present ✅
+          
+          Seed Data (GET /api/groups, GET /api/groups/{id}/matches):
+          - All 9 demo groups have field_lat & field_lng in Paris area (48.x, 2.x range).
+          - Demo matches include location_lat & location_lng.
+          - Seed data geo fields verified ✅
+
   - task: "Friends system (request / accept / decline / remove / list / status)"
     implemented: true
     working: "NA"
@@ -193,6 +275,77 @@ backend:
         comment: "Requires current+new. Enforce >=6 chars."
 
 frontend:
+  - task: "LeafletMap component (web via DOM + Leaflet CDN, native via WebView) — dual platform"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/LeafletMap.tsx, LeafletMap.web.tsx, LeafletMap.native.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Free & open-source map (Leaflet + OpenStreetMap tiles). Platform-split file:
+          - .web.tsx: loads leaflet.js + leaflet.css from unpkg CDN and renders a real
+            interactive map on the DOM. Supports draggable marker, click-to-place,
+            imperative setCenter/setMarkers, and multi-marker rendering.
+          - .native.tsx: same feature-set via react-native-webview inline HTML that
+            loads Leaflet from the same CDN and postMessage()s selection back to RN.
+          Styled to match the dark theme (custom pin icons, attribution).
+
+  - task: "AddressAutocomplete component (Nominatim-backed debounced search)"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/AddressAutocomplete.tsx, frontend/src/services/geocoding.ts"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          TextInput + dropdown of real Nominatim results. 450ms debounce, in-memory
+          cache, stale-response guard. Handles minChars=3, empty query, loading state,
+          clear button, and "© OpenStreetMap contributors" attribution.
+
+  - task: "LocationPicker component — global autocomplete + interactive Leaflet map picker"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/components/LocationPicker.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Combines AddressAutocomplete + LeafletMap (draggable marker, click-to-place).
+          Emits { formatted_address, latitude, longitude, city?, country? }. Includes
+          "Use current location" button (expo-location), reverse-geocoding when the pin
+          is dragged, and a coordinate chip for feedback.
+
+  - task: "Geolocation wired into every location input (create-group, create-match, edit-profile, map, group detail, match detail)"
+    implemented: true
+    working: "NA"
+    file: "frontend/app/create-group.tsx, create-match.tsx, edit-profile.tsx, map.tsx, group/[id].tsx, match/[id].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          - create-group: replaced plain "city" input with LocationPicker; body now
+            posts city (from geocode), field_location, field_lat, field_lng.
+          - create-match: replaced plain "location" input; body posts location,
+            formatted_address, location_lat, location_lng.
+          - edit-profile: kept quick city text field + added LocationPicker for
+            precise address; body posts formatted_address, latitude, longitude.
+          - map.tsx: rewritten to use LeafletMap on ALL platforms (no more mock).
+          - group/[id]: renders read-only LeafletMap preview under the field card.
+          - match/[id]: renders read-only LeafletMap preview under the location row.
+
   - task: "Keyboard input focus (chat + forms) via react-native-keyboard-controller"
     implemented: true
     working: "NA"
@@ -256,20 +409,17 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "4.0"
-  test_sequence: 4
+  test_sequence: 5
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Friends system (request / accept / decline / remove / list / status)"
-    - "Polls in chat (create via /messages with poll payload, vote via /messages/{id}/poll/vote)"
-    - "Match ratings (POST /matches/{id}/ratings, GET /matches/{id}/ratings/mine)"
-    - "Leave group (POST /groups/{id}/leave)"
-    - "OTP security (request + verify email/phone/mfa; dev accepts 000000)"
-    - "Change password (POST /users/me/password)"
-    - "Group detail V4 wiring (Share modal, Leave with confirm, Field location card, clickable members, Rating trigger)"
-    - "Chat V4 (Poll create + vote, Photo attach with permissions, Location button, Clickable avatars)"
-    - "Keyboard input focus (chat + forms) via react-native-keyboard-controller"
+    - "OpenStreetMap Nominatim geocoding proxy (GET /api/geocode/search & /api/geocode/reverse)"
+    - "Persist geolocation fields on Groups/Matches/Users"
+    - "LeafletMap component (web via DOM + Leaflet CDN, native via WebView)"
+    - "AddressAutocomplete component"
+    - "LocationPicker component"
+    - "Geolocation wired into every location input (create-group, create-match, edit-profile, map, group detail, match detail)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -285,3 +435,40 @@ agent_communication:
       (b) group detail menu shows Share/Leave/Rate/Report/Block, (c) leave group prompts confirm alert,
       (d) tapping a chat avatar navigates to /profile/[id], (e) polls can be created & voted,
       (f) map screen renders (web mock is fine — react-native-maps needs a native build).
+  - agent: "testing"
+    message: |
+      ✅ V5 GEOLOCATION BACKEND TESTING COMPLETE - ALL TESTS PASSED
+      
+      Tested all V5 geolocation features as requested:
+      
+      1. ✅ Nominatim proxy (GET /api/geocode/search & /api/geocode/reverse)
+         - All query types tested (valid, short, empty, limit clamping)
+         - Reverse geocoding with valid/invalid coords
+         - Response shapes match specification
+         - Endpoints are open (no auth required)
+      
+      2. ✅ Group geo field persistence (field_location, field_lat, field_lng)
+         - POST /api/groups persists all geo fields
+         - GET /api/groups/{id} returns all geo fields
+      
+      3. ✅ Match geo field persistence (location, formatted_address, location_lat, location_lng)
+         - POST /api/matches persists all geo fields
+         - GET /api/matches/{id} returns all geo fields
+      
+      4. ✅ User geo field persistence (formatted_address, latitude, longitude)
+         - PATCH /api/users/me persists geo fields in database
+         - Verified via direct MongoDB query
+         - Note: Fields not in UserPublic schema but stored correctly
+      
+      5. ✅ Seed data includes geo fields
+         - All 9 demo groups have Paris coords (48.x, 2.x)
+         - Demo matches include location coords
+      
+      6. ✅ Regression sanity checks passed
+         - Pre-existing endpoints (login, list groups, get profile) working
+      
+      Test credentials used: demo@matchup.app / demo1234
+      Test file: /app/backend_test.py (comprehensive test suite created)
+      
+      MINOR OBSERVATION (not a blocker):
+      - User geo fields (formatted_address, latitude, longitude) are persisted in DB but not exposed in UserPublic schema. This is acceptable as the data is stored correctly and can be retrieved if needed.

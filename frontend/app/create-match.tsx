@@ -14,6 +14,8 @@ import { Ionicons } from "@expo/vector-icons";
 import dayjs from "dayjs";
 import { Screen } from "@/src/components/Screen";
 import { Button } from "@/src/components/Button";
+import LocationPicker from "@/src/components/LocationPicker";
+import type { PickedLocation } from "@/src/services/geocoding";
 import { api } from "@/src/api/client";
 import { colors, spacing, radius } from "@/src/theme";
 
@@ -28,7 +30,7 @@ export default function CreateMatch() {
   const { group_id } = useLocalSearchParams<{ group_id: string }>();
   const router = useRouter();
   const [title, setTitle] = useState("Match hebdo");
-  const [location, setLocation] = useState("");
+  const [location, setLocation] = useState<PickedLocation | null>(null);
   const [maxPlayers, setMaxPlayers] = useState("12");
   const [selectedDate, setSelectedDate] = useState<Date>(() => {
     const d = new Date();
@@ -43,13 +45,16 @@ export default function CreateMatch() {
     setError(null);
     if (!group_id) return setError("Groupe introuvable");
     if (title.trim().length < 2) return setError("Titre trop court");
-    if (location.trim().length < 2) return setError("Ajoute un lieu");
+    if (!location) return setError("Ajoute un lieu (recherche ou clique sur la carte)");
     setSaving(true);
     try {
       const m = await api.createMatch({
         group_id,
         title: title.trim(),
-        location: location.trim(),
+        location: (location.formatted_address || "").slice(0, 200),
+        formatted_address: location.formatted_address,
+        location_lat: location.latitude,
+        location_lng: location.longitude,
         date: selectedDate.toISOString(),
         max_players: parseInt(maxPlayers, 10) || 12,
       });
@@ -89,14 +94,14 @@ export default function CreateMatch() {
             style={styles.input}
           />
 
-          <Text style={styles.label}>Lieu</Text>
-          <TextInput
-            testID="cm-location-input"
+          <Text style={styles.label}>Lieu *</Text>
+          <LocationPicker
             value={location}
-            onChangeText={setLocation}
-            placeholder="Stade Léo Lagrange"
-            placeholderTextColor={colors.textMuted}
-            style={styles.input}
+            onChange={setLocation}
+            placeholder="Ex: Stade L\u00e9o Lagrange, Paris"
+            hint="Cherche le terrain ou tape sur la carte pour ajuster."
+            mapHeight={220}
+            testIDPrefix="cm-location"
           />
 
           <Text style={styles.label}>Quand ?</Text>
